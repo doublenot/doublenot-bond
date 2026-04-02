@@ -1,0 +1,32 @@
+version: 1
+executable_path: .bond/bin/doublenot-bond
+commands:
+  test:
+    - program: cargo
+      args:
+        - test
+      description: cargo test
+  lint:
+    - program: cargo
+      args:
+        - fmt
+        - --
+        - --check
+      description: cargo fmt -- --check
+    - program: cargo
+      args:
+        - clippy
+        - --all-targets
+        - --
+        - -D
+        - warnings
+      description: cargo clippy --all-targets -- -D warnings
+issues:
+  eligible_labels:
+    - bond-debug
+    - bond-task
+  priority_labels:
+    - bond-debug
+    - bond-task
+  require_prompt_contract: true
+  issue_history_limit: 10

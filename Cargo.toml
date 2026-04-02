@@ -1,0 +1,25 @@
+[package]
+name = "doublenot-bond"
+version = "0.1.0"
+edition = "2021"
+description = "A self-hosting coding agent that stores runtime identity inside .bond/."
+license = "MIT"
+readme = "README.md"
+
+[[bin]]
+name = "doublenot-bond"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+async-trait = "0.1"
+rustyline = "15"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+time = { version = "0.3", features = ["formatting"] }
+tokio = { version = "1", features = ["full"] }
+yoagent = { version = "0.7.5", features = ["openapi"] }
+
+[dev-dependencies]
+tempfile = "3.10.1"

@@ -1,0 +1,22 @@
+# Generated files
+/target/
+/Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+*.env.local
+
+# Local tooling
+.tools/
+
+# bond
+.bond/bin/doublenot-bond
