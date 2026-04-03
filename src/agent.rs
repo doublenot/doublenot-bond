@@ -14,7 +14,9 @@ use yoagent::types::{AgentTool, ToolContext, ToolError, ToolResult};
 pub struct BondAgentConfig {
     pub repo_root: std::path::PathBuf,
     pub model: String,
+    pub model_source: &'static str,
     pub provider: String,
+    pub provider_source: &'static str,
     pub api_key: String,
     pub system_prompt: String,
     pub permissions: PermissionConfig,
@@ -23,11 +25,27 @@ pub struct BondAgentConfig {
 
 impl BondAgentConfig {
     pub fn from_args(args: &Args, runtime: &BondRuntimeContext) -> Result<Self> {
-        let provider = args.provider.clone();
-        let model = args
-            .model
-            .clone()
-            .unwrap_or_else(|| cli::default_model_for_provider(&provider));
+        let (provider, provider_source) = match &args.provider {
+            Some(provider) => (provider.clone(), "--provider flag"),
+            None => (
+                runtime.config.automation.provider.clone(),
+                ".bond/config.yml",
+            ),
+        };
+        let (model, model_source) = match &args.model {
+            Some(model) => (model.clone(), "--model flag"),
+            None => {
+                let configured_model = runtime.config.automation.model.trim();
+                if configured_model.is_empty() {
+                    (
+                        cli::default_model_for_provider(&provider),
+                        "provider default",
+                    )
+                } else {
+                    (runtime.config.automation.model.clone(), ".bond/config.yml")
+                }
+            }
+        };
 
         let api_key = args
             .api_key
@@ -40,7 +58,9 @@ impl BondAgentConfig {
         Ok(Self {
             repo_root: runtime.paths.repo_root.clone(),
             model,
+            model_source,
             provider,
+            provider_source,
             api_key,
             system_prompt: build_system_prompt(runtime),
             permissions: args.permissions.clone(),

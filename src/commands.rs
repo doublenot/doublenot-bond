@@ -31,10 +31,34 @@ pub fn dispatch_command(
         "/status" => {
             println!("repo: {}", runtime.paths.repo_root.display());
             println!("provider: {}", config.provider);
+            println!("provider_source: {}", config.provider_source);
             println!("model: {}", config.model);
+            println!("model_source: {}", config.model_source);
             println!("configured: {}", runtime.config.configured);
             println!("autonomous_enabled: {}", runtime.config.autonomous_enabled);
             println!("runtime_executable: {}", runtime.config.executable_path);
+            println!(
+                "automation_schedule_cron: {}",
+                runtime.config.automation.schedule_cron
+            );
+            println!(
+                "automation_provider: {}",
+                runtime.config.automation.provider
+            );
+            println!("automation_model: {}", runtime.config.automation.model);
+            println!(
+                "automation_model_reasoning: {}",
+                display_optional_text(&runtime.config.automation.model_reasoning)
+            );
+            println!(
+                "workflow_file: {}",
+                runtime.paths.bond_workflow_file.display()
+            );
+            println!(
+                "workflow_installed: {}",
+                runtime.paths.bond_workflow_file.exists()
+            );
+            print_automation_status_validation(runtime, config);
             if let Some(issue) = &runtime.config.setup_issue {
                 println!(
                     "setup_issue: number={:?}, state={:?}, url={:?}",
@@ -79,7 +103,7 @@ pub fn dispatch_command(
             );
             Ok(ReplDirective::Continue)
         }
-        "/setup" => handle_setup(parts.collect(), runtime),
+        "/setup" => handle_setup(parts.collect(), runtime, config),
         "/quit" | "/exit" => Ok(ReplDirective::Exit),
         "/git" => handle_git(parts.collect(), runtime, config),
         "/issues" => handle_issues(parts.collect(), runtime),
@@ -93,13 +117,89 @@ pub fn dispatch_command(
     }
 }
 
-fn handle_setup(args: Vec<&str>, runtime: &mut BondRuntimeContext) -> Result<ReplDirective> {
+fn print_automation_status_validation(runtime: &BondRuntimeContext, config: &BondAgentConfig) {
+    let configured_provider = runtime.config.automation.provider.trim();
+    let configured_model = runtime.config.automation.model.trim();
+    let provider_matches_runtime = configured_provider == config.provider;
+    let model_looks_valid =
+        model_looks_compatible_with_provider(configured_provider, configured_model);
+    let recommended_model = cli::default_model_for_provider(configured_provider);
+
+    println!(
+        "automation_provider_matches_runtime: {}",
+        provider_matches_runtime
+    );
+    println!(
+        "automation_model_looks_valid_for_provider: {}",
+        model_looks_valid
+    );
+    println!("automation_recommended_model: {recommended_model}");
+
+    if !provider_matches_runtime {
+        println!(
+            "automation_provider_warning: runtime provider '{}' differs from automation provider '{}'",
+            config.provider, configured_provider
+        );
+    }
+
+    if !model_looks_valid {
+        println!(
+            "automation_model_warning: model '{}' does not look like a normal match for provider '{}'",
+            configured_model, configured_provider
+        );
+    }
+}
+
+fn model_looks_compatible_with_provider(provider: &str, model: &str) -> bool {
+    if model.is_empty() {
+        return false;
+    }
+
+    let provider = provider.to_ascii_lowercase();
+    let model = model.to_ascii_lowercase();
+
+    match provider.as_str() {
+        "anthropic" => model.contains("claude"),
+        "google" => model.contains("gemini"),
+        "openai" => {
+            model.starts_with("gpt")
+                || model.starts_with("o1")
+                || model.starts_with("o3")
+                || model.starts_with("o4")
+                || model.starts_with("chatgpt")
+                || model.starts_with("codex")
+        }
+        "ollama" => true,
+        "deepseek" => model.contains("deepseek"),
+        "openrouter" | "groq" => true,
+        _ => true,
+    }
+}
+
+fn display_optional_text(value: &str) -> &str {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        "<none>"
+    } else {
+        trimmed
+    }
+}
+
+fn handle_setup(
+    args: Vec<&str>,
+    runtime: &mut BondRuntimeContext,
+    config: &BondAgentConfig,
+) -> Result<ReplDirective> {
     let subcommand = args.first().copied().unwrap_or("status");
 
     match subcommand {
         "status" => {
             println!("configured: {}", runtime.config.configured);
             println!("autonomous_enabled: {}", runtime.config.autonomous_enabled);
+            println!("provider: {}", config.provider);
+            println!("provider_source: {}", config.provider_source);
+            println!("model: {}", config.model);
+            println!("model_source: {}", config.model_source);
             if let Some(issue) = &runtime.config.setup_issue {
                 println!("setup_issue_number: {:?}", issue.number);
                 println!("setup_issue_state: {:?}", issue.state);
@@ -115,6 +215,27 @@ fn handle_setup(args: Vec<&str>, runtime: &mut BondRuntimeContext) -> Result<Rep
             println!("journal_file: {}", runtime.paths.journal_file.display());
             println!("config_file: {}", runtime.paths.config_file.display());
             println!("state_file: {}", runtime.paths.state_file.display());
+            println!(
+                "automation_schedule_cron: {}",
+                runtime.config.automation.schedule_cron
+            );
+            println!(
+                "automation_provider: {}",
+                runtime.config.automation.provider
+            );
+            println!("automation_model: {}", runtime.config.automation.model);
+            println!(
+                "automation_model_reasoning: {}",
+                display_optional_text(&runtime.config.automation.model_reasoning)
+            );
+            println!(
+                "workflow_file: {}",
+                runtime.paths.bond_workflow_file.display()
+            );
+            println!(
+                "workflow_installed: {}",
+                runtime.paths.bond_workflow_file.exists()
+            );
             println!("test_commands: {}", runtime.config.commands.test.len());
             println!("lint_commands: {}", runtime.config.commands.lint.len());
             println!(
@@ -193,6 +314,38 @@ fn handle_setup(args: Vec<&str>, runtime: &mut BondRuntimeContext) -> Result<Rep
             runtime.refresh_config()?;
             println!("Bond setup marked complete.");
         }
+        "workflow" => {
+            let refresh = matches!(args.get(1).copied(), Some("refresh"));
+            let wrote_workflow = runtime.paths.install_bond_workflow(refresh)?;
+
+            if wrote_workflow {
+                runtime.paths.append_journal_entry(
+                    if refresh {
+                        "Bond Workflow Refreshed"
+                    } else {
+                        "Bond Workflow Installed"
+                    },
+                    &format!(
+                        "Workflow file: {}\n\nSchedule: {}\nProvider: {}\nModel: {}",
+                        runtime.paths.bond_workflow_file.display(),
+                        runtime.config.automation.schedule_cron,
+                        runtime.config.automation.provider,
+                        runtime.config.automation.model
+                    ),
+                )?;
+                println!(
+                    "Bond workflow {}: {}",
+                    if refresh { "refreshed" } else { "installed" },
+                    runtime.paths.bond_workflow_file.display()
+                );
+            } else {
+                println!(
+                    "Bond workflow already exists: {}",
+                    runtime.paths.bond_workflow_file.display()
+                );
+                println!("Use: /setup workflow refresh");
+            }
+        }
         "reset" => {
             runtime.paths.set_configured(false)?;
             runtime.refresh_config()?;
@@ -200,11 +353,57 @@ fn handle_setup(args: Vec<&str>, runtime: &mut BondRuntimeContext) -> Result<Rep
         }
         other => {
             println!("Unknown /setup subcommand: {other}");
-            println!("Use: /setup status | /setup issue | /setup complete | /setup reset");
+            println!(
+                "Use: /setup status | /setup issue | /setup workflow [refresh] | /setup complete | /setup reset"
+            );
         }
     }
 
     Ok(ReplDirective::Continue)
+}
+
+pub fn prepare_scheduled_issue_prompt(runtime: &mut BondRuntimeContext) -> Result<Option<String>> {
+    if runtime.config.current_issue.is_some() {
+        let issue = current_issue_detail(runtime)?;
+        if matches!(issue.state.as_deref(), Some("CLOSED" | "closed")) {
+            runtime.paths.set_current_issue(None, Some("cleared"))?;
+            runtime.refresh_config()?;
+        } else if issue_matches_workflow(&issue, &runtime.config.issues) {
+            runtime.paths.append_journal_entry(
+                "Scheduled Issue Execution Started",
+                &format!(
+                    "Continuing issue #{} [{}] {} from the scheduled workflow.\n\n{}",
+                    issue.number,
+                    issue.primary_label(),
+                    issue.title,
+                    issue.url
+                ),
+            )?;
+            return Ok(Some(build_issue_execution_prompt(&issue)));
+        } else {
+            runtime.paths.set_current_issue(None, Some("cleared"))?;
+            runtime.refresh_config()?;
+        }
+    }
+
+    let repo = detect_github_repo(&runtime.paths.repo_root)?;
+    let issues = load_eligible_issues(runtime, &repo)?;
+    if let Some(issue) = select_next_issue(&issues, &runtime.config.issues) {
+        persist_current_issue_with_action(runtime, issue, "scheduled")?;
+        runtime.paths.append_journal_entry(
+            "Scheduled Issue Execution Started",
+            &format!(
+                "Selected issue #{} [{}] {} from the scheduled workflow.\n\n{}",
+                issue.number,
+                issue.primary_label(),
+                issue.title,
+                issue.url
+            ),
+        )?;
+        return Ok(Some(build_issue_execution_prompt(issue)));
+    }
+
+    Ok(None)
 }
 
 fn handle_git(

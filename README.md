@@ -8,11 +8,13 @@
 - [x] Install and re-exec through `.bond/bin/doublenot-bond`
 - [x] Keep identity, personality, and journal files inside `.bond/`
 - [x] Separate operator settings in `.bond/config.yml` from mutable runtime state in `.bond/state.yml`
+- [x] Store scheduled automation provider, model, and cron config in `.bond/config.yml`
 - [x] Support one-shot prompts and an interactive REPL
 - [x] Run local slash commands without API credentials
 - [x] Configure repository-specific `/test` and `/lint` workflows
 - [x] Enforce permission and directory restrictions for commands and tools
 - [x] Create GitHub onboarding issues and prompt-contract issue templates
+- [x] Generate a scheduled GitHub Actions workflow from `.bond/config.yml`
 - [x] Intake, rank, and select eligible GitHub issues
 - [x] Persist current issue, last issue, parked issues, and recent issue history
 - [x] Resume, reopen, park, comment on, sync, and complete issue-driven work
@@ -36,7 +38,11 @@ Running the binary bootstraps:
 - `.github/ISSUE_TEMPLATE/bond-task.md`
 - `.github/ISSUE_TEMPLATE/bond-debug.md`
 
-The `.bond/config.yml` file is the local contract for workflow commands and issue intake rules.
+The `.bond/config.yml` file is the local contract for scheduled automation, workflow commands, and issue intake rules.
+
+The scheduled workflow file is created intentionally with `/setup workflow`:
+
+- `.github/workflows/bond.yml`
 
 ## Basic Usage
 
@@ -144,16 +150,62 @@ The intended onboarding sequence is:
 2. Customize `.bond/IDENTITY.md` and `.bond/PERSONALITY.md`.
 3. Create a GitHub onboarding issue with `/setup issue`.
 4. Review the generated issue templates.
-5. Mark setup complete with `/setup complete`.
+5. Create or refresh the scheduled workflow with `/setup workflow`.
+6. Mark setup complete with `/setup complete`.
 
 Useful setup commands:
 
 ```text
 /setup status
 /setup issue
+/setup workflow
+/setup workflow refresh
 /setup complete
 /setup reset
 ```
+
+## Scheduled Automation
+
+Scheduled automation is configured in `.bond/config.yml` under `automation` and installed with `/setup workflow`.
+
+Example:
+
+```yaml
+automation:
+  schedule_cron: '0 * * * *'
+  provider: anthropic
+  model: claude-sonnet-4-20250514
+  model_reasoning: Use the default Claude model for scheduled repository work.
+```
+
+The generated `.github/workflows/bond.yml` first builds `doublenot-bond` into `.bond/bin/`, then runs that repo-local executable:
+
+```bash
+cargo build --locked --bin doublenot-bond
+mkdir -p .bond/bin
+cp target/debug/doublenot-bond .bond/bin/doublenot-bond
+./.bond/bin/doublenot-bond --repo . --run-scheduled-issue
+```
+
+When `--provider` and `--model` are omitted, `doublenot-bond` now falls back to `automation.provider` and `automation.model` from `.bond/config.yml`.
+
+That scheduled path is issue-driven. It continues the current eligible issue if one is already selected locally; otherwise it selects the next eligible GitHub issue using the same intake rules as `/issues next`, then hands the resulting execution prompt to the agent runtime.
+
+Required repository secrets depend on the configured provider:
+
+- `anthropic` → `ANTHROPIC_API_KEY`
+- `openai` → `OPENAI_API_KEY`
+- `google` → `GOOGLE_API_KEY`
+- `openrouter` → `OPENROUTER_API_KEY`
+- `groq` → `GROQ_API_KEY`
+- `deepseek` → `DEEPSEEK_API_KEY`
+- `ollama` → no API-key secret is injected, but a hosted GitHub Actions runner is generally not a practical Ollama target
+
+The workflow also uses `GITHUB_TOKEN` for issue reads, comments, closes, and any git operations performed during the run.
+
+Generated workflows also include a per-ref concurrency group and a 30-minute timeout so overlapping cron runs do not stack up on the same branch.
+
+If `automation.model_reasoning` is set, the generated `.github/workflows/bond.yml` carries that rationale as YAML comments at the top of the file.
 
 ## Issue Workflow
 
@@ -197,6 +249,10 @@ Typical operator flow:
 
 Runtime settings live in `.bond/config.yml`, while mutable runtime state now lives in `.bond/state.yml`.
 
+Scheduled automation settings also live in `.bond/config.yml`. If you change the cron, provider, or model there, run `/setup workflow refresh` to rewrite `.github/workflows/bond.yml` intentionally.
+
+You can also set `automation.model_reasoning` to record why that model was chosen. `/status` and `/setup status` print that reasoning back alongside the provider/model checks.
+
 Recent issue retention is configurable through `.bond/config.yml` at `issues.issue_history_limit`. The default is `10`.
 
 Issue records in `current_issue`, `last_issue`, and `issue_history` also carry lightweight metadata so local state can explain the last transition, including `last_action` and `last_action_at`.
@@ -215,6 +271,11 @@ These can be replaced with repository-specific commands. `/test` and `/lint` onl
 Example for a Node repository:
 
 ```yaml
+automation:
+  schedule_cron: '0 */4 * * *'
+  provider: openai
+  model: gpt-4.1
+  model_reasoning: Prefer the default OpenAI model for broadly compatible scheduled maintenance work.
 commands:
   test:
     - program: npm
@@ -238,6 +299,11 @@ issues:
 Example for a Python repository:
 
 ```yaml
+automation:
+  schedule_cron: '30 */2 * * *'
+  provider: anthropic
+  model: claude-sonnet-4-20250514
+  model_reasoning: Prefer Claude for longer code-editing runs with strong repository context handling.
 commands:
   test:
     - program: pytest
@@ -264,6 +330,11 @@ issues:
 Example with custom workflow commands for a monorepo:
 
 ```yaml
+automation:
+  schedule_cron: '15 * * * *'
+  provider: google
+  model: gemini-2.5-pro
+  model_reasoning: Use Gemini for scheduled monorepo work because it handles broad cross-package analysis well.
 commands:
   test:
     - program: pnpm

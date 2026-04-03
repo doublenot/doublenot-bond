@@ -65,13 +65,23 @@ async fn run() -> Result<()> {
     }
 
     let mut runtime = bond_paths.load_runtime_context()?;
-    if !runtime.config.configured {
+    if !runtime.config.configured && !args.run_scheduled_issue {
         eprintln!(
             "Bond setup is not complete yet. Review .bond files and use /setup complete when ready."
         );
     }
 
     let agent_config = agent::BondAgentConfig::from_args(&args, &runtime)?;
+
+    if args.run_scheduled_issue {
+        if let Some(issue_prompt) = commands::prepare_scheduled_issue_prompt(&mut runtime)? {
+            let mut agent = agent_config.build_agent()?;
+            prompt::run_prompt(&mut agent, &issue_prompt).await?;
+        } else {
+            println!("No eligible scheduled issue found.");
+        }
+        return Ok(());
+    }
 
     if let Some(prompt_text) = args.prompt.clone() {
         if prompt_text.trim_start().starts_with('/') {

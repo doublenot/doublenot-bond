@@ -91,6 +91,34 @@ fn bootstrap_only_writes_default_config_and_state() {
         config.get("executable_path").and_then(Value::as_str),
         Some(".bond/bin/doublenot-bond")
     );
+    assert_eq!(
+        config
+            .get("automation")
+            .and_then(|automation| automation.get("schedule_cron"))
+            .and_then(Value::as_str),
+        Some("0 * * * *")
+    );
+    assert_eq!(
+        config
+            .get("automation")
+            .and_then(|automation| automation.get("provider"))
+            .and_then(Value::as_str),
+        Some("anthropic")
+    );
+    assert_eq!(
+        config
+            .get("automation")
+            .and_then(|automation| automation.get("model"))
+            .and_then(Value::as_str),
+        Some("claude-sonnet-4-20250514")
+    );
+    assert_eq!(
+        config
+            .get("automation")
+            .and_then(|automation| automation.get("model_reasoning"))
+            .and_then(Value::as_str),
+        Some("")
+    );
     assert!(config.get("configured").is_none());
     assert!(config.get("last_issue").is_none());
     assert!(config.get("current_issue").is_none());

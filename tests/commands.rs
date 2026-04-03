@@ -112,6 +112,91 @@ fn prompt_status_reports_active_and_parked_issue_summary() {
     assert!(stdout.contains("current_issue: #34 [bond-debug] Active issue"));
     assert!(stdout.contains("issue_posture: active=1, parked=1"));
     assert!(stdout.contains("latest_parked: #21 [bond-task] Parked issue"));
+    assert!(stdout.contains("automation_model_reasoning: <none>"));
+    assert!(stdout.contains("automation_provider_matches_runtime: false"));
+    assert!(stdout.contains("automation_model_looks_valid_for_provider: true"));
+}
+
+#[test]
+fn prompt_status_reports_automation_provider_and_model_validation() {
+    let temp = tempdir().expect("tempdir");
+    let repo = temp.path();
+
+    let bond_dir = repo.join(".bond");
+    fs::create_dir_all(&bond_dir).expect("create .bond directory");
+    fs::write(
+        bond_dir.join("config.yml"),
+        "version: 1\nexecutable_path: .bond/bin/doublenot-bond\nautomation:\n  schedule_cron: '0 * * * *'\n  provider: openai\n  model: claude-sonnet-4-20250514\n  model_reasoning: Need to compare the config against the runtime provider and model family.\ncommands:\n  test: []\n  lint: []\nissues:\n  eligible_labels:\n    - bond-debug\n    - bond-task\n  priority_labels:\n    - bond-debug\n    - bond-task\n  require_prompt_contract: true\n  issue_history_limit: 10\n",
+    )
+    .expect("write config");
+    fs::write(
+        bond_dir.join("state.yml"),
+        "configured: false\nautonomous_enabled: false\nsetup_issue: null\nlast_issue: null\ncurrent_issue: null\nissue_history: []\n",
+    )
+    .expect("write state");
+
+    let output = bond_cmd()
+        .arg("--repo")
+        .arg(repo)
+        .arg("--bond-runtime")
+        .arg("--provider")
+        .arg("anthropic")
+        .arg("--prompt")
+        .arg("/status")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run doublenot-bond");
+
+    assert!(output.status.success(), "status should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("automation_provider: openai"));
+    assert!(stdout.contains("automation_model: claude-sonnet-4-20250514"));
+    assert!(stdout.contains("automation_model_reasoning: Need to compare the config against the runtime provider and model family."));
+    assert!(stdout.contains("automation_provider_matches_runtime: false"));
+    assert!(stdout.contains("automation_model_looks_valid_for_provider: false"));
+    assert!(stdout.contains("automation_recommended_model: gpt-4.1"));
+    assert!(stdout.contains("automation_provider_warning:"));
+    assert!(stdout.contains("automation_model_warning:"));
+}
+
+#[test]
+fn prompt_status_accepts_matching_automation_provider_and_model() {
+    let temp = tempdir().expect("tempdir");
+    let repo = temp.path();
+
+    let bond_dir = repo.join(".bond");
+    fs::create_dir_all(&bond_dir).expect("create .bond directory");
+    fs::write(
+        bond_dir.join("config.yml"),
+        "version: 1\nexecutable_path: .bond/bin/doublenot-bond\nautomation:\n  schedule_cron: '0 * * * *'\n  provider: anthropic\n  model: claude-sonnet-4-20250514\n  model_reasoning: Use the default Claude model for the scheduled repository workflow.\ncommands:\n  test: []\n  lint: []\nissues:\n  eligible_labels:\n    - bond-debug\n    - bond-task\n  priority_labels:\n    - bond-debug\n    - bond-task\n  require_prompt_contract: true\n  issue_history_limit: 10\n",
+    )
+    .expect("write config");
+    fs::write(
+        bond_dir.join("state.yml"),
+        "configured: false\nautonomous_enabled: false\nsetup_issue: null\nlast_issue: null\ncurrent_issue: null\nissue_history: []\n",
+    )
+    .expect("write state");
+
+    let output = bond_cmd()
+        .arg("--repo")
+        .arg(repo)
+        .arg("--bond-runtime")
+        .arg("--provider")
+        .arg("anthropic")
+        .arg("--prompt")
+        .arg("/status")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run doublenot-bond");
+
+    assert!(output.status.success(), "status should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("automation_provider_matches_runtime: true"));
+    assert!(stdout.contains("automation_model_looks_valid_for_provider: true"));
+    assert!(stdout.contains("automation_model_reasoning: Use the default Claude model for the scheduled repository workflow."));
+    assert!(stdout.contains("automation_recommended_model: claude-sonnet-4-20250514"));
+    assert!(!stdout.contains("automation_provider_warning:"));
+    assert!(!stdout.contains("automation_model_warning:"));
 }
 
 #[test]
@@ -254,6 +339,301 @@ fn prompt_setup_issue_fails_without_github_remote() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("GitHub origin remote") || stderr.contains("remote.origin.url"));
+}
+
+#[test]
+fn prompt_setup_workflow_creates_bond_workflow_file() {
+    let temp = tempdir().expect("tempdir");
+    let repo = temp.path();
+
+    let output = bond_cmd()
+        .arg("--repo")
+        .arg(repo)
+        .arg("--bond-runtime")
+        .arg("--provider")
+        .arg("ollama")
+        .arg("--prompt")
+        .arg("/setup workflow")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run doublenot-bond");
+
+    assert!(output.status.success(), "setup workflow should exit 0");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Bond workflow installed:"),
+        "stdout: {stdout}"
+    );
+
+    let workflow_text = fs::read_to_string(repo.join(".github/workflows/bond.yml"))
+        .expect("read generated workflow");
+    assert!(!workflow_text.contains("# Model reasoning:"));
+    assert!(workflow_text.contains("cron: '0 * * * *'"));
+    assert!(workflow_text.contains("concurrency:"));
+    assert!(workflow_text.contains("group: bond-${{ github.ref }}"));
+    assert!(workflow_text.contains("cancel-in-progress: false"));
+    assert!(workflow_text.contains("timeout-minutes: 30"));
+    assert!(workflow_text.contains("cargo build --locked --bin doublenot-bond"));
+    assert!(workflow_text.contains("mkdir -p .bond/bin"));
+    assert!(workflow_text.contains("cp target/debug/doublenot-bond .bond/bin/doublenot-bond"));
+    assert!(workflow_text.contains("ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}"));
+    assert!(!workflow_text.contains("BOND_PROVIDER:"));
+    assert!(!workflow_text.contains("BOND_MODEL:"));
+    assert!(workflow_text.contains("./.bond/bin/doublenot-bond --repo . --run-scheduled-issue"));
+    assert!(!workflow_text.contains("--provider \"$BOND_PROVIDER\""));
+    assert!(!workflow_text.contains("--model \"$BOND_MODEL\""));
+}
+
+#[test]
+fn prompt_setup_workflow_preserves_existing_file_without_refresh() {
+    let temp = tempdir().expect("tempdir");
+    let repo = temp.path();
+
+    let workflow_dir = repo.join(".github/workflows");
+    fs::create_dir_all(&workflow_dir).expect("create workflow dir");
+    fs::write(workflow_dir.join("bond.yml"), "name: custom\n").expect("write existing workflow");
+
+    let output = bond_cmd()
+        .arg("--repo")
+        .arg(repo)
+        .arg("--bond-runtime")
+        .arg("--provider")
+        .arg("ollama")
+        .arg("--prompt")
+        .arg("/setup workflow")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run doublenot-bond");
+
+    assert!(output.status.success(), "setup workflow should exit 0");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Bond workflow already exists:"),
+        "stdout: {stdout}"
+    );
+
+    let workflow_text =
+        fs::read_to_string(workflow_dir.join("bond.yml")).expect("read existing workflow");
+    assert_eq!(workflow_text, "name: custom\n");
+}
+
+#[test]
+fn prompt_setup_workflow_refresh_overwrites_existing_file() {
+    let temp = tempdir().expect("tempdir");
+    let repo = temp.path();
+
+    let bond_dir = repo.join(".bond");
+    fs::create_dir_all(&bond_dir).expect("create .bond directory");
+    fs::write(
+        bond_dir.join("config.yml"),
+        "version: 1\nexecutable_path: .bond/bin/doublenot-bond\nautomation:\n  schedule_cron: '15 * * * *'\n  provider: google\n  model: gemini-2.5-pro\n  model_reasoning: Use Gemini for scheduled monorepo work because it handles broad cross-package analysis well.\ncommands:\n  test: []\n  lint: []\nissues:\n  eligible_labels:\n    - bond-debug\n    - bond-task\n  priority_labels:\n    - bond-debug\n    - bond-task\n  require_prompt_contract: true\n  issue_history_limit: 10\n",
+    )
+    .expect("write config");
+
+    let workflow_dir = repo.join(".github/workflows");
+    fs::create_dir_all(&workflow_dir).expect("create workflow dir");
+    fs::write(workflow_dir.join("bond.yml"), "name: stale\n").expect("write existing workflow");
+
+    let output = bond_cmd()
+        .arg("--repo")
+        .arg(repo)
+        .arg("--bond-runtime")
+        .arg("--provider")
+        .arg("ollama")
+        .arg("--prompt")
+        .arg("/setup workflow refresh")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run doublenot-bond");
+
+    assert!(output.status.success(), "workflow refresh should exit 0");
+
+    let workflow_text =
+        fs::read_to_string(workflow_dir.join("bond.yml")).expect("read refreshed workflow");
+    assert!(workflow_text.contains("# Model reasoning:"));
+    assert!(workflow_text.contains("Use Gemini for scheduled monorepo work because it handles broad cross-package analysis well."));
+    assert!(workflow_text.contains("cron: '15 * * * *'"));
+    assert!(workflow_text.contains("timeout-minutes: 30"));
+    assert!(workflow_text.contains("cp target/debug/doublenot-bond .bond/bin/doublenot-bond"));
+    assert!(workflow_text.contains("GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}"));
+    assert!(!workflow_text.contains("BOND_PROVIDER:"));
+    assert!(!workflow_text.contains("BOND_MODEL:"));
+}
+
+#[test]
+fn scheduled_run_without_eligible_issue_skips_setup_warning() {
+    let temp = tempdir().expect("tempdir");
+    let repo = temp.path();
+
+    let init = Command::new("git")
+        .arg("init")
+        .current_dir(repo)
+        .output()
+        .expect("git init");
+    assert!(init.status.success(), "git init should succeed");
+
+    let remote = Command::new("git")
+        .args([
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/acme/widgets.git",
+        ])
+        .current_dir(repo)
+        .output()
+        .expect("git remote add origin");
+    assert!(
+        remote.status.success(),
+        "git remote add origin should succeed"
+    );
+
+    let fake_gh = repo.join("fake-gh.sh");
+    fs::write(
+        &fake_gh,
+        "#!/bin/sh\nif [ \"$1\" = \"issue\" ] && [ \"$2\" = \"list\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nprintf 'unexpected gh invocation: %s\\n' \"$*\" >&2\nexit 1\n",
+    )
+    .expect("write fake gh script");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut permissions = fs::metadata(&fake_gh)
+            .expect("fake gh metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&fake_gh, permissions).expect("chmod fake gh");
+    }
+
+    let output = bond_cmd()
+        .arg("--repo")
+        .arg(repo)
+        .arg("--bond-runtime")
+        .arg("--provider")
+        .arg("ollama")
+        .arg("--run-scheduled-issue")
+        .env("BOND_GH_BIN", &fake_gh)
+        .stdin(Stdio::null())
+        .output()
+        .expect("run doublenot-bond");
+
+    assert!(output.status.success(), "scheduled run should exit 0");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.contains("No eligible scheduled issue found."));
+    assert!(!stderr.contains("Bond setup is not complete yet."));
+}
+
+#[test]
+fn prompt_status_uses_config_provider_and_model_when_flags_are_omitted() {
+    let temp = tempdir().expect("tempdir");
+    let repo = temp.path();
+
+    let bond_dir = repo.join(".bond");
+    fs::create_dir_all(&bond_dir).expect("create .bond directory");
+    fs::write(
+        bond_dir.join("config.yml"),
+        "version: 1\nexecutable_path: .bond/bin/doublenot-bond\nautomation:\n  schedule_cron: '0 * * * *'\n  provider: openai\n  model: gpt-5.4\n  model_reasoning: Use the configured OpenAI defaults when CLI flags are omitted.\ncommands:\n  test: []\n  lint: []\nissues:\n  eligible_labels:\n    - bond-debug\n    - bond-task\n  priority_labels:\n    - bond-debug\n    - bond-task\n  require_prompt_contract: true\n  issue_history_limit: 10\n",
+    )
+    .expect("write config");
+    fs::write(
+        bond_dir.join("state.yml"),
+        "configured: false\nautonomous_enabled: false\nsetup_issue: null\nlast_issue: null\ncurrent_issue: null\nissue_history: []\n",
+    )
+    .expect("write state");
+
+    let output = bond_cmd()
+        .arg("--repo")
+        .arg(repo)
+        .arg("--bond-runtime")
+        .arg("--prompt")
+        .arg("/status")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run doublenot-bond");
+
+    assert!(output.status.success(), "status should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("provider: openai"));
+    assert!(stdout.contains("provider_source: .bond/config.yml"));
+    assert!(stdout.contains("model: gpt-5.4"));
+    assert!(stdout.contains("model_source: .bond/config.yml"));
+    assert!(stdout.contains("automation_provider_matches_runtime: true"));
+}
+
+#[test]
+fn prompt_status_reports_cli_sources_when_flags_are_explicit() {
+    let temp = tempdir().expect("tempdir");
+    let repo = temp.path();
+
+    let bond_dir = repo.join(".bond");
+    fs::create_dir_all(&bond_dir).expect("create .bond directory");
+    fs::write(
+        bond_dir.join("config.yml"),
+        "version: 1\nexecutable_path: .bond/bin/doublenot-bond\nautomation:\n  schedule_cron: '0 * * * *'\n  provider: openai\n  model: gpt-5.4\n  model_reasoning: Use config defaults unless the operator passes explicit flags.\ncommands:\n  test: []\n  lint: []\nissues:\n  eligible_labels:\n    - bond-debug\n    - bond-task\n  priority_labels:\n    - bond-debug\n    - bond-task\n  require_prompt_contract: true\n  issue_history_limit: 10\n",
+    )
+    .expect("write config");
+    fs::write(
+        bond_dir.join("state.yml"),
+        "configured: false\nautonomous_enabled: false\nsetup_issue: null\nlast_issue: null\ncurrent_issue: null\nissue_history: []\n",
+    )
+    .expect("write state");
+
+    let output = bond_cmd()
+        .arg("--repo")
+        .arg(repo)
+        .arg("--bond-runtime")
+        .arg("--provider")
+        .arg("anthropic")
+        .arg("--model")
+        .arg("claude-sonnet-4-20250514")
+        .arg("--prompt")
+        .arg("/status")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run doublenot-bond");
+
+    assert!(output.status.success(), "status should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("provider: anthropic"));
+    assert!(stdout.contains("provider_source: --provider flag"));
+    assert!(stdout.contains("model: claude-sonnet-4-20250514"));
+    assert!(stdout.contains("model_source: --model flag"));
+}
+
+#[test]
+fn prompt_setup_status_uses_default_automation_when_config_omits_it() {
+    let temp = tempdir().expect("tempdir");
+    let repo = temp.path();
+
+    let bond_dir = repo.join(".bond");
+    fs::create_dir_all(&bond_dir).expect("create .bond directory");
+    fs::write(
+        bond_dir.join("config.yml"),
+        "version: 1\nexecutable_path: .bond/bin/doublenot-bond\ncommands:\n  test: []\n  lint: []\nissues:\n  eligible_labels:\n    - bond-debug\n    - bond-task\n  priority_labels:\n    - bond-debug\n    - bond-task\n  require_prompt_contract: true\n  issue_history_limit: 10\n",
+    )
+    .expect("write legacy-style config");
+
+    let output = bond_cmd()
+        .arg("--repo")
+        .arg(repo)
+        .arg("--bond-runtime")
+        .arg("--provider")
+        .arg("ollama")
+        .arg("--prompt")
+        .arg("/setup status")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run doublenot-bond");
+
+    assert!(output.status.success(), "setup status should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("provider: ollama"));
+    assert!(stdout.contains("provider_source: --provider flag"));
+    assert!(stdout.contains("model_source: .bond/config.yml"));
+    assert!(stdout.contains("automation_schedule_cron: 0 * * * *"));
+    assert!(stdout.contains("automation_provider: anthropic"));
+    assert!(stdout.contains("automation_model_reasoning: <none>"));
 }
 
 #[test]

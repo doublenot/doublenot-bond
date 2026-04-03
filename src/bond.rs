@@ -1,3 +1,4 @@
+use crate::cli;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -8,6 +9,7 @@ use time::OffsetDateTime;
 const BOND_DIR: &str = ".bond";
 const BOND_BIN_DIR: &str = "bin";
 const GITHUB_DIR: &str = ".github";
+const WORKFLOWS_DIR: &str = "workflows";
 const ISSUE_TEMPLATE_DIR: &str = "ISSUE_TEMPLATE";
 const IDENTITY_FILE: &str = "IDENTITY.md";
 const PERSONALITY_FILE: &str = "PERSONALITY.md";
@@ -18,18 +20,21 @@ const ISSUE_TEMPLATE_CONFIG_FILE: &str = "config.yml";
 const SETUP_ISSUE_TEMPLATE_FILE: &str = "bond-setup.md";
 const TASK_ISSUE_TEMPLATE_FILE: &str = "bond-task.md";
 const DEBUG_ISSUE_TEMPLATE_FILE: &str = "bond-debug.md";
+const BOND_WORKFLOW_FILE: &str = "bond.yml";
 
 #[derive(Debug, Clone)]
 pub struct BondPaths {
     pub repo_root: PathBuf,
     pub bond_dir: PathBuf,
     pub bin_dir: PathBuf,
+    pub github_workflows_dir: PathBuf,
     pub issue_template_dir: PathBuf,
     pub identity_file: PathBuf,
     pub personality_file: PathBuf,
     pub journal_file: PathBuf,
     pub config_file: PathBuf,
     pub state_file: PathBuf,
+    pub bond_workflow_file: PathBuf,
     pub issue_template_config_file: PathBuf,
     pub setup_issue_template_file: PathBuf,
     pub task_issue_template_file: PathBuf,
@@ -86,6 +91,24 @@ impl Default for WorkflowCommands {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomationSettings {
+    #[serde(default = "default_schedule_cron")]
+    pub schedule_cron: String,
+    #[serde(default = "default_automation_provider")]
+    pub provider: String,
+    #[serde(default = "default_automation_model")]
+    pub model: String,
+    #[serde(default = "default_automation_model_reasoning")]
+    pub model_reasoning: String,
+}
+
+impl Default for AutomationSettings {
+    fn default() -> Self {
+        default_automation_settings()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IssueWorkflow {
     #[serde(default)]
     pub eligible_labels: Vec<String>,
@@ -108,6 +131,8 @@ pub struct BondSettings {
     pub version: u32,
     pub executable_path: String,
     #[serde(default)]
+    pub automation: AutomationSettings,
+    #[serde(default)]
     pub commands: WorkflowCommands,
     #[serde(default)]
     pub issues: IssueWorkflow,
@@ -118,6 +143,7 @@ impl Default for BondSettings {
         Self {
             version: 1,
             executable_path: default_executable_path(),
+            automation: default_automation_settings(),
             commands: default_workflow_commands(),
             issues: default_issue_workflow(),
         }
@@ -143,6 +169,8 @@ pub struct BondConfig {
     pub configured: bool,
     pub autonomous_enabled: bool,
     pub executable_path: String,
+    #[serde(default)]
+    pub automation: AutomationSettings,
     pub setup_issue: Option<SetupIssue>,
     #[serde(default)]
     pub last_issue: Option<CurrentIssue>,
@@ -169,6 +197,7 @@ impl BondConfig {
             configured: state.configured,
             autonomous_enabled: state.autonomous_enabled,
             executable_path: settings.executable_path,
+            automation: settings.automation,
             setup_issue: state.setup_issue,
             last_issue: state.last_issue,
             current_issue: state.current_issue,
@@ -196,17 +225,20 @@ impl BondPaths {
         let bond_dir = repo_root.join(BOND_DIR);
         let bin_dir = bond_dir.join(BOND_BIN_DIR);
         let github_dir = repo_root.join(GITHUB_DIR);
+        let github_workflows_dir = github_dir.join(WORKFLOWS_DIR);
         let issue_template_dir = github_dir.join(ISSUE_TEMPLATE_DIR);
         Ok(Self {
             repo_root,
             bond_dir: bond_dir.clone(),
             bin_dir,
+            github_workflows_dir: github_workflows_dir.clone(),
             issue_template_dir: issue_template_dir.clone(),
             identity_file: bond_dir.join(IDENTITY_FILE),
             personality_file: bond_dir.join(PERSONALITY_FILE),
             journal_file: bond_dir.join(JOURNAL_FILE),
             config_file: bond_dir.join(CONFIG_FILE),
             state_file: bond_dir.join(STATE_FILE),
+            bond_workflow_file: github_workflows_dir.join(BOND_WORKFLOW_FILE),
             issue_template_config_file: issue_template_dir.join(ISSUE_TEMPLATE_CONFIG_FILE),
             setup_issue_template_file: issue_template_dir.join(SETUP_ISSUE_TEMPLATE_FILE),
             task_issue_template_file: issue_template_dir.join(TASK_ISSUE_TEMPLATE_FILE),
@@ -272,6 +304,23 @@ impl BondPaths {
         )?;
 
         Ok(created_any)
+    }
+
+    pub fn install_bond_workflow(&self, force: bool) -> Result<bool> {
+        fs::create_dir_all(&self.github_workflows_dir)
+            .with_context(|| format!("failed to create {}", self.github_workflows_dir.display()))?;
+
+        let settings = self.load_bond_settings()?;
+        let contents = default_bond_workflow_contents(&settings.automation);
+
+        if force {
+            fs::write(&self.bond_workflow_file, contents).with_context(|| {
+                format!("failed to write {}", self.bond_workflow_file.display())
+            })?;
+            return Ok(true);
+        }
+
+        write_if_missing(&self.bond_workflow_file, &contents)
     }
 
     pub fn load_bond_config(&self) -> Result<BondConfig> {
@@ -534,6 +583,31 @@ fn default_issue_template_config_contents() -> String {
     "blank_issues_enabled: false\ncontact_links: []\n".to_string()
 }
 
+fn default_automation_settings() -> AutomationSettings {
+    AutomationSettings {
+        schedule_cron: default_schedule_cron(),
+        provider: default_automation_provider(),
+        model: default_automation_model(),
+        model_reasoning: default_automation_model_reasoning(),
+    }
+}
+
+fn default_schedule_cron() -> String {
+    "0 * * * *".to_string()
+}
+
+fn default_automation_provider() -> String {
+    "anthropic".to_string()
+}
+
+fn default_automation_model() -> String {
+    cli::default_model_for_provider(&default_automation_provider())
+}
+
+fn default_automation_model_reasoning() -> String {
+    String::new()
+}
+
 fn default_workflow_commands() -> WorkflowCommands {
     WorkflowCommands {
         test: vec![RepoCommand {
@@ -569,6 +643,36 @@ fn default_issue_workflow() -> IssueWorkflow {
         require_prompt_contract: true,
         issue_history_limit: default_issue_history_limit(),
     }
+}
+
+fn default_bond_workflow_contents(automation: &AutomationSettings) -> String {
+    let provider = automation.provider.trim();
+    let model_reasoning_comments = workflow_comment_block(&automation.model_reasoning);
+    let api_key_env = cli::provider_api_key_env(provider)
+        .map(|env| format!("          {env}: ${{{{ secrets.{env} }}}}\n"))
+        .unwrap_or_default();
+
+    format!(
+        "# Generated by doublenot-bond from .bond/config.yml.\n# Refresh with: doublenot-bond --prompt \"/setup workflow refresh\"\n{model_reasoning_comments}name: bond\n\non:\n  workflow_dispatch:\n  schedule:\n    - cron: '{cron}'\n\nenv:\n  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true\n\npermissions:\n  contents: write\n  issues: write\n  pull-requests: write\n\nconcurrency:\n  group: bond-${{{{ github.ref }}}}\n  cancel-in-progress: false\n\njobs:\n  bond:\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n\n    steps:\n      - uses: actions/checkout@v5\n        with:\n          fetch-depth: 0\n\n      - name: Install build dependencies\n        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev\n\n      - name: Install Rust toolchain\n        uses: dtolnay/rust-toolchain@stable\n\n      - name: Build repo-local bond runtime\n        shell: bash\n        run: |\n          set -euo pipefail\n          cargo build --locked --bin doublenot-bond\n          mkdir -p .bond/bin\n          cp target/debug/doublenot-bond .bond/bin/doublenot-bond\n          chmod +x .bond/bin/doublenot-bond\n\n      - name: Configure git identity\n        run: |\n          git config user.name \"github-actions[bot]\"\n          git config user.email \"41898282+github-actions[bot]@users.noreply.github.com\"\n\n      - name: Run scheduled bond issue workflow\n        env:\n          GH_TOKEN: ${{{{ secrets.GITHUB_TOKEN }}}}\n{api_key_env}        run: ./.bond/bin/doublenot-bond --repo . --run-scheduled-issue\n",
+        cron = automation.schedule_cron,
+        model_reasoning_comments = model_reasoning_comments,
+        api_key_env = api_key_env,
+    )
+}
+
+fn workflow_comment_block(reasoning: &str) -> String {
+    let trimmed = reasoning.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let mut block = String::from("# Model reasoning:\n");
+    for line in trimmed.lines() {
+        block.push_str("# ");
+        block.push_str(line.trim());
+        block.push('\n');
+    }
+    block
 }
 
 fn default_require_prompt_contract() -> bool {

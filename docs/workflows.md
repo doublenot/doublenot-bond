@@ -1,6 +1,6 @@
 # Workflow Diagrams
 
-This document captures the current validation and release flow for `doublenot-bond`.
+This document captures the current validation, release, and scheduled automation flow for `doublenot-bond`.
 
 ## Validation And Release Flow
 
@@ -58,6 +58,40 @@ flowchart TD
 - `make ci-local` is the closest local equivalent to the Linux CI path.
 - The release dry-run only exercises the Linux packaging path locally.
 - The tagged release workflow is the only path that publishes cross-platform archives and release assets.
+
+## Scheduled Bond Workflow
+
+```mermaid
+flowchart TD
+    A[Operator updates .bond/config.yml] --> B[/setup workflow]
+    B --> C[Generate .github/workflows/bond.yml]
+    C --> D{GitHub trigger}
+
+    D -->|schedule cron| E[enter per-ref concurrency group]
+    D -->|workflow_dispatch| E
+
+    E --> F[start bond job with 30-minute timeout]
+    F --> G[checkout repository]
+    G --> H[install pkg-config libssl-dev and Rust]
+    H --> I[build doublenot-bond into .bond/bin]
+    I --> J[configure git identity]
+    J --> K[run .bond/bin/doublenot-bond with run-scheduled-issue]
+    K --> L{Current eligible issue already selected?}
+    L -->|Yes| M[continue current issue]
+    L -->|No| N[select next eligible GitHub issue]
+    M --> O[build issue execution prompt]
+    N --> O
+    O --> P[run agent against repository]
+    P --> Q[update .bond state and issue state]
+```
+
+## Scheduled Workflow Notes
+
+- The generated workflow builds from the checked-out repository source, stages the binary into `.bond/bin`, and runs that repo-local executable.
+- Cron, provider, and model are rendered from `.bond/config.yml` into `.github/workflows/bond.yml`.
+- Provider API-key secret names are fixed by provider and match the runtime env lookup logic.
+- Generated workflows use a per-ref concurrency group and a 30-minute timeout to avoid overlapping scheduled runs on the same branch.
+- `/setup workflow` preserves an existing `.github/workflows/bond.yml`; `/setup workflow refresh` overwrites it intentionally.
 
 ## Doublenot-Bond Runtime Flow
 

@@ -88,7 +88,7 @@ impl DirectoryRestrictions {
 pub struct Args {
     pub repo: Option<PathBuf>,
     pub prompt: Option<String>,
-    pub provider: String,
+    pub provider: Option<String>,
     pub model: Option<String>,
     pub api_key: Option<String>,
     pub permissions: PermissionConfig,
@@ -98,6 +98,7 @@ pub struct Args {
     pub version: bool,
     pub bootstrap_only: bool,
     pub bond_runtime: bool,
+    pub run_scheduled_issue: bool,
 }
 
 impl Default for Args {
@@ -105,7 +106,7 @@ impl Default for Args {
         Self {
             repo: None,
             prompt: None,
-            provider: "anthropic".to_string(),
+            provider: None,
             model: None,
             api_key: None,
             permissions: PermissionConfig::default(),
@@ -115,6 +116,7 @@ impl Default for Args {
             version: false,
             bootstrap_only: false,
             bond_runtime: false,
+            run_scheduled_issue: false,
         }
     }
 }
@@ -130,6 +132,7 @@ pub fn parse_args(args: Vec<String>) -> Result<Args> {
             "--no-color" => parsed.no_color = true,
             "--bootstrap-only" => parsed.bootstrap_only = true,
             "--bond-runtime" => parsed.bond_runtime = true,
+            "--run-scheduled-issue" => parsed.run_scheduled_issue = true,
             "--repo" => {
                 let value = iter
                     .next()
@@ -143,9 +146,10 @@ pub fn parse_args(args: Vec<String>) -> Result<Args> {
                 parsed.prompt = Some(value);
             }
             "--provider" => {
-                parsed.provider = iter
-                    .next()
-                    .ok_or_else(|| anyhow!("--provider requires a value"))?;
+                parsed.provider = Some(
+                    iter.next()
+                        .ok_or_else(|| anyhow!("--provider requires a value"))?,
+                );
             }
             "--model" => {
                 parsed.model = Some(
@@ -247,14 +251,15 @@ pub fn print_help() {
     println!("Options:");
     println!("  --repo <path>          Use a specific repository root");
     println!("  --prompt, -p <text>    Run a one-shot prompt");
-    println!("  --provider <name>      Set the AI provider");
-    println!("  --model <name>         Override the model");
+    println!("  --provider <name>      Set the AI provider (defaults to .bond/config.yml)");
+    println!("  --model <name>         Override the model (defaults to .bond/config.yml)");
     println!("  --api-key <key>        Provide an API key directly");
     println!("  --allow <pattern>      Allow matching shell/file operations");
     println!("  --deny <pattern>       Deny matching shell/file operations");
     println!("  --allow-dir <path>     Allow file access only under this directory");
     println!("  --deny-dir <path>      Deny file access under this directory");
     println!("  --bootstrap-only       Create .bond/ and exit");
+    println!("  --run-scheduled-issue  Select or resume an issue-driven run for automation");
     println!("  --no-color             Disable ANSI colors");
     println!("  --help, -h             Show this help text");
     println!("  --version, -V          Show the version");
@@ -262,6 +267,7 @@ pub fn print_help() {
     println!("Slash commands:");
     println!("  /status                Show runtime and model status");
     println!("  /setup <subcommand>    Manage .bond setup state and onboarding issue");
+    println!("    /setup workflow      Create .github/workflows/bond.yml from .bond/config.yml");
     println!("  /issues list           List eligible GitHub intake issues");
     println!("  /issues next           Select the highest-priority eligible issue");
     println!(
