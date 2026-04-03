@@ -803,6 +803,214 @@ fn prompt_issues_next_returns_highest_priority_eligible_issue() {
 }
 
 #[test]
+fn prompt_issues_next_labels_format_issues_and_skips_them() {
+    let temp = tempdir().expect("tempdir");
+    let repo = temp.path();
+
+    let init = Command::new("git")
+        .arg("init")
+        .current_dir(repo)
+        .output()
+        .expect("git init");
+    assert!(init.status.success(), "git init should succeed");
+
+    let remote = Command::new("git")
+        .args([
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/acme/widgets.git",
+        ])
+        .current_dir(repo)
+        .output()
+        .expect("git remote add origin");
+    assert!(
+        remote.status.success(),
+        "git remote add origin should succeed"
+    );
+
+    let fake_gh = repo.join("fake-gh-format-issue.sh");
+    let log_path = repo.join("gh-format.log");
+    fs::write(
+        &fake_gh,
+        "#!/bin/sh\nprintf '%s\n' \"$*\" >> \"$BOND_GH_LOG\"\nif [ \"$1\" = \"label\" ] && [ \"$2\" = \"create\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"issue\" ] && [ \"$2\" = \"edit\" ] && [ \"$3\" = \"9\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"issue\" ] && [ \"$2\" = \"list\" ]; then\ncat <<'JSON'\n[{\"number\":9,\"title\":\"Malformed issue\",\"url\":\"https://github.com/acme/widgets/issues/9\",\"labels\":[{\"name\":\"bond-task\"}],\"body\":\"## Inputs\\nfoo\"},{\"number\":3,\"title\":\"Debug issue\",\"url\":\"https://github.com/acme/widgets/issues/3\",\"labels\":[{\"name\":\"bond-debug\"}],\"body\":\"## Inputs\\nfoo\\n## Expected Output\\nbar\\n## Constraints\\nbaz\\n## Edge Cases\\nqux\\n## Acceptance Criteria\\nready\"}]\nJSON\nexit 0\nfi\nprintf 'unexpected gh invocation: %s\\n' \"$*\" >&2\nexit 1\n",
+    )
+    .expect("write fake gh issues script");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&fake_gh)
+            .expect("fake gh metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&fake_gh, permissions).expect("chmod fake gh");
+    }
+
+    let output = bond_cmd()
+        .arg("--repo")
+        .arg(repo)
+        .arg("--bond-runtime")
+        .arg("--provider")
+        .arg("ollama")
+        .arg("--prompt")
+        .arg("/issues next")
+        .env("BOND_GH_BIN", &fake_gh)
+        .env("BOND_GH_LOG", &log_path)
+        .stdin(Stdio::null())
+        .output()
+        .expect("run doublenot-bond");
+
+    assert!(output.status.success(), "issues next should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Next issue: #3 [bond-debug] Debug issue"));
+    assert!(!stdout.contains("Malformed issue"));
+
+    let gh_log = fs::read_to_string(log_path).expect("read gh log");
+    assert!(gh_log.contains("label create format-issue"));
+    assert!(gh_log.contains("issue edit 9 --repo acme/widgets --add-label format-issue"));
+}
+
+#[test]
+fn prompt_issues_next_labels_blocked_dependency_issues_and_skips_them() {
+    let temp = tempdir().expect("tempdir");
+    let repo = temp.path();
+
+    let init = Command::new("git")
+        .arg("init")
+        .current_dir(repo)
+        .output()
+        .expect("git init");
+    assert!(init.status.success(), "git init should succeed");
+
+    let remote = Command::new("git")
+        .args([
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/acme/widgets.git",
+        ])
+        .current_dir(repo)
+        .output()
+        .expect("git remote add origin");
+    assert!(
+        remote.status.success(),
+        "git remote add origin should succeed"
+    );
+
+    let fake_gh = repo.join("fake-gh-blocked-dependent.sh");
+    let log_path = repo.join("gh-blocked-dependent.log");
+    fs::write(
+        &fake_gh,
+        "#!/bin/sh\nprintf '%s\n' \"$*\" >> \"$BOND_GH_LOG\"\nif [ \"$1\" = \"label\" ] && [ \"$2\" = \"create\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"issue\" ] && [ \"$2\" = \"edit\" ] && [ \"$3\" = \"11\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"issue\" ] && [ \"$2\" = \"view\" ] && [ \"$3\" = \"5\" ]; then\ncat <<'JSON'\n{\"number\":5,\"title\":\"Dependency issue\",\"url\":\"https://github.com/acme/widgets/issues/5\",\"state\":\"OPEN\",\"labels\":[{\"name\":\"bond-task\"}],\"body\":\"## Inputs\\nfoo\\n## Expected Output\\nbar\\n## Constraints\\nbaz\\n## Edge Cases\\nqux\\n## Acceptance Criteria\\nready\"}\nJSON\nexit 0\nfi\nif [ \"$1\" = \"issue\" ] && [ \"$2\" = \"list\" ]; then\ncat <<'JSON'\n[{\"number\":11,\"title\":\"Dependent issue\",\"url\":\"https://github.com/acme/widgets/issues/11\",\"labels\":[{\"name\":\"bond-task\"}],\"body\":\"## Inputs\\nfoo\\nDepends on: #5\\n## Expected Output\\nbar\\n## Constraints\\nbaz\\n## Edge Cases\\nqux\\n## Acceptance Criteria\\nready\"},{\"number\":3,\"title\":\"Debug issue\",\"url\":\"https://github.com/acme/widgets/issues/3\",\"labels\":[{\"name\":\"bond-debug\"}],\"body\":\"## Inputs\\nfoo\\n## Expected Output\\nbar\\n## Constraints\\nbaz\\n## Edge Cases\\nqux\\n## Acceptance Criteria\\nready\"}]\nJSON\nexit 0\nfi\nprintf 'unexpected gh invocation: %s\\n' \"$*\" >&2\nexit 1\n",
+    )
+    .expect("write fake gh blocked dependent script");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&fake_gh)
+            .expect("fake gh metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&fake_gh, permissions).expect("chmod fake gh");
+    }
+
+    let output = bond_cmd()
+        .arg("--repo")
+        .arg(repo)
+        .arg("--bond-runtime")
+        .arg("--provider")
+        .arg("ollama")
+        .arg("--prompt")
+        .arg("/issues next")
+        .env("BOND_GH_BIN", &fake_gh)
+        .env("BOND_GH_LOG", &log_path)
+        .stdin(Stdio::null())
+        .output()
+        .expect("run doublenot-bond");
+
+    assert!(output.status.success(), "issues next should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Next issue: #3 [bond-debug] Debug issue"));
+    assert!(!stdout.contains("Dependent issue"));
+
+    let gh_log = fs::read_to_string(log_path).expect("read gh log");
+    assert!(gh_log
+        .contains("issue view 5 --repo acme/widgets --json number,title,body,url,state,labels"));
+    assert!(gh_log.contains("label create blocked-dependent"));
+    assert!(gh_log.contains("issue edit 11 --repo acme/widgets --add-label blocked-dependent"));
+}
+
+#[test]
+fn prompt_issues_next_skips_blocked_and_needs_human_issues() {
+    let temp = tempdir().expect("tempdir");
+    let repo = temp.path();
+
+    let init = Command::new("git")
+        .arg("init")
+        .current_dir(repo)
+        .output()
+        .expect("git init");
+    assert!(init.status.success(), "git init should succeed");
+
+    let remote = Command::new("git")
+        .args([
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/acme/widgets.git",
+        ])
+        .current_dir(repo)
+        .output()
+        .expect("git remote add origin");
+    assert!(
+        remote.status.success(),
+        "git remote add origin should succeed"
+    );
+
+    let fake_gh = repo.join("fake-gh-blocked.sh");
+    fs::write(
+        &fake_gh,
+        "#!/bin/sh\nif [ \"$1\" = \"issue\" ] && [ \"$2\" = \"list\" ]; then\ncat <<'JSON'\n[{\"number\":2,\"title\":\"Blocked debug issue\",\"url\":\"https://github.com/acme/widgets/issues/2\",\"labels\":[{\"name\":\"bond-debug\"},{\"name\":\"blocked\"}],\"body\":\"## Inputs\\nfoo\\n## Expected Output\\nbar\\n## Constraints\\nbaz\\n## Edge Cases\\nqux\\n## Acceptance Criteria\\nready\"},{\"number\":4,\"title\":\"Needs human issue\",\"url\":\"https://github.com/acme/widgets/issues/4\",\"labels\":[{\"name\":\"bond-debug\"},{\"name\":\"needs-human\"}],\"body\":\"## Inputs\\nfoo\\n## Expected Output\\nbar\\n## Constraints\\nbaz\\n## Edge Cases\\nqux\\n## Acceptance Criteria\\nready\"},{\"number\":8,\"title\":\"Task issue\",\"url\":\"https://github.com/acme/widgets/issues/8\",\"labels\":[{\"name\":\"bond-task\"}],\"body\":\"## Inputs\\nfoo\\n## Expected Output\\nbar\\n## Constraints\\nbaz\\n## Edge Cases\\nqux\\n## Acceptance Criteria\\nready\"}]\nJSON\nexit 0\nfi\nprintf 'unexpected gh invocation: %s\\n' \"$*\" >&2\nexit 1\n",
+    )
+    .expect("write fake gh blocked script");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&fake_gh)
+            .expect("fake gh metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&fake_gh, permissions).expect("chmod fake gh");
+    }
+
+    let output = bond_cmd()
+        .arg("--repo")
+        .arg(repo)
+        .arg("--bond-runtime")
+        .arg("--provider")
+        .arg("ollama")
+        .arg("--prompt")
+        .arg("/issues next")
+        .env("BOND_GH_BIN", &fake_gh)
+        .stdin(Stdio::null())
+        .output()
+        .expect("run doublenot-bond");
+
+    assert!(output.status.success(), "issues next should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Next issue: #8 [bond-task] Task issue"));
+    assert!(!stdout.contains("Blocked debug issue"));
+    assert!(!stdout.contains("Needs human issue"));
+
+    let config_text = fs::read_to_string(state_file(repo)).expect("read state");
+    assert!(config_text.contains("number: 8"));
+    assert!(config_text.contains("title: Task issue"));
+}
+
+#[test]
 fn prompt_issues_list_reports_no_eligible_issues() {
     let temp = tempdir().expect("tempdir");
     let repo = temp.path();
@@ -994,6 +1202,74 @@ fn prompt_issues_select_rejects_ineligible_issue() {
     assert!(
         !output.status.success(),
         "issues select should reject ineligible issues"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("does not satisfy the configured intake workflow"));
+
+    let config_text = fs::read_to_string(state_file(repo)).expect("read state");
+    assert!(config_text.contains("current_issue: null"));
+}
+
+#[test]
+fn prompt_issues_select_rejects_blocked_needs_human_format_and_blocked_dependent_issue() {
+    let temp = tempdir().expect("tempdir");
+    let repo = temp.path();
+
+    let init = Command::new("git")
+        .arg("init")
+        .current_dir(repo)
+        .output()
+        .expect("git init");
+    assert!(init.status.success(), "git init should succeed");
+
+    let remote = Command::new("git")
+        .args([
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/acme/widgets.git",
+        ])
+        .current_dir(repo)
+        .output()
+        .expect("git remote add origin");
+    assert!(
+        remote.status.success(),
+        "git remote add origin should succeed"
+    );
+
+    let fake_gh = repo.join("fake-gh-select-blocked.sh");
+    fs::write(
+        &fake_gh,
+        "#!/bin/sh\nif [ \"$1\" = \"issue\" ] && [ \"$2\" = \"view\" ] && [ \"$3\" = \"22\" ]; then\ncat <<'JSON'\n{\"number\":22,\"title\":\"Blocked dependent manual issue\",\"url\":\"https://github.com/acme/widgets/issues/22\",\"labels\":[{\"name\":\"bond-task\"},{\"name\":\"blocked-dependent\"}],\"body\":\"## Inputs\\nInspect docs\\n## Expected Output\\nExplain behavior\\n## Constraints\\nNo code changes\\n## Edge Cases\\nNone\\n## Acceptance Criteria\\nLooks good\"}\nJSON\nexit 0\nfi\nprintf 'unexpected gh invocation: %s\\n' \"$*\" >&2\nexit 1\n",
+    )
+    .expect("write fake gh blocked select script");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&fake_gh)
+            .expect("fake gh metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&fake_gh, permissions).expect("chmod fake gh");
+    }
+
+    let output = bond_cmd()
+        .arg("--repo")
+        .arg(repo)
+        .arg("--bond-runtime")
+        .arg("--provider")
+        .arg("ollama")
+        .arg("--prompt")
+        .arg("/issues select 22")
+        .env("BOND_GH_BIN", &fake_gh)
+        .stdin(Stdio::null())
+        .output()
+        .expect("run doublenot-bond");
+
+    assert!(
+        !output.status.success(),
+        "issues select should reject blocked, needs-human, format-issue, and blocked-dependent issues"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("does not satisfy the configured intake workflow"));

@@ -194,8 +194,38 @@ fn bootstrap_only_writes_prompt_contract_issue_templates() {
         .expect("read bond-task template");
     assert!(task_template.contains("## Inputs"));
     assert!(task_template.contains("## Acceptance Criteria"));
+    assert!(task_template.contains("Depends on: #123"));
 
     let debug_template = std::fs::read_to_string(repo.join(".github/ISSUE_TEMPLATE/bond-debug.md"))
         .expect("read bond-debug template");
     assert!(debug_template.contains("## Edge Cases"));
+    assert!(debug_template.contains("Depends on: #123"));
+}
+
+#[test]
+fn bootstrap_only_writes_identity_and_personality_templates() {
+    let temp = tempdir().expect("tempdir");
+    let repo = temp.path();
+
+    let output = bond_cmd()
+        .arg("--repo")
+        .arg(repo)
+        .arg("--bootstrap-only")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run doublenot-bond");
+
+    assert!(output.status.success(), "bootstrap should exit 0");
+
+    let identity = std::fs::read_to_string(repo.join(".bond/IDENTITY.md")).expect("read identity");
+    assert!(identity.contains("- Name: "));
+    assert!(identity.contains("Describe what this repository is for"));
+    assert!(identity.contains("needs-human"));
+    assert!(identity.contains("outside the bond's intake queue"));
+
+    let personality =
+        std::fs::read_to_string(repo.join(".bond/PERSONALITY.md")).expect("read personality");
+    assert!(personality.contains("careful repository mechanic"));
+    assert!(personality.contains("Operator-aware"));
+    assert!(personality.contains("needs-human"));
 }

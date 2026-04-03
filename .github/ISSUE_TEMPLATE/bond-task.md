@@ -1,7 +1,7 @@
 ---
 name: Bond Task
 about: Give the bond a task using the prompt-contract structure
-title: "Task: "
+title: 'Task: '
 labels: bond-task
 assignees: ''
 ---
@@ -17,6 +17,8 @@ Describe the desired code, docs, or behavior change.
 ## Constraints
 
 List any architectural rules, scope boundaries, or forbidden approaches.
+
+If this task depends on earlier issue work that is not resolved yet, add a line like `Depends on: #123`.
 
 ## Edge Cases
 

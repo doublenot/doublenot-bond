@@ -1356,14 +1356,38 @@ fn load_eligible_issues(runtime: &BondRuntimeContext, repo: &str) -> Result<Vec<
 
     let issues: Vec<GitHubIssue> =
         serde_json::from_str(&raw).context("failed to parse gh issue list JSON")?;
-    Ok(issues
-        .into_iter()
-        .filter(|issue| issue_matches_workflow(issue, &runtime.config.issues))
-        .collect())
+    let mut eligible = Vec::new();
+    for issue in issues {
+        if should_mark_format_issue(&issue, &runtime.config.issues) {
+            let _ = ensure_format_issue_label(&gh_bin, &runtime.paths.repo_root, repo, &issue);
+            continue;
+        }
+
+        if should_mark_blocked_dependency_issue(runtime, repo, &issue)? {
+            let _ =
+                ensure_blocked_dependency_label(&gh_bin, &runtime.paths.repo_root, repo, &issue);
+            continue;
+        }
+
+        if issue_matches_workflow(&issue, &runtime.config.issues) {
+            eligible.push(issue);
+        }
+    }
+
+    Ok(eligible)
 }
 
 fn issue_matches_workflow(issue: &GitHubIssue, workflow: &IssueWorkflow) -> bool {
     let label_names = issue.label_names();
+    if label_names.iter().any(|label| {
+        label.eq_ignore_ascii_case("blocked")
+            || label.eq_ignore_ascii_case("needs-human")
+            || label.eq_ignore_ascii_case("format-issue")
+            || label.eq_ignore_ascii_case("blocked-dependent")
+    }) {
+        return false;
+    }
+
     let label_match = label_names.iter().any(|label| {
         workflow
             .eligible_labels
@@ -1380,6 +1404,166 @@ fn issue_matches_workflow(issue: &GitHubIssue, workflow: &IssueWorkflow) -> bool
     }
 
     true
+}
+
+fn should_mark_format_issue(issue: &GitHubIssue, workflow: &IssueWorkflow) -> bool {
+    if !workflow.require_prompt_contract {
+        return false;
+    }
+
+    let label_names = issue.label_names();
+    let eligible = label_names.iter().any(|label| {
+        workflow
+            .eligible_labels
+            .iter()
+            .any(|eligible| eligible == label)
+    });
+
+    eligible
+        && !label_names
+            .iter()
+            .any(|label| label.eq_ignore_ascii_case("format-issue"))
+        && !has_prompt_contract_sections(&issue.body)
+}
+
+fn should_mark_blocked_dependency_issue(
+    runtime: &BondRuntimeContext,
+    repo: &str,
+    issue: &GitHubIssue,
+) -> Result<bool> {
+    if !issue_matches_workflow(issue, &runtime.config.issues) {
+        return Ok(false);
+    }
+
+    for dependency in dependency_issue_numbers(&issue.body) {
+        let dependency_issue = load_issue_by_number(runtime, repo, dependency);
+        match dependency_issue {
+            Ok(issue) if !matches!(issue.state.as_deref(), Some("CLOSED" | "closed")) => {
+                return Ok(true);
+            }
+            Ok(_) => {}
+            Err(_) => return Ok(true),
+        }
+    }
+
+    Ok(false)
+}
+
+fn ensure_format_issue_label(
+    gh_bin: &str,
+    repo_root: &Path,
+    repo: &str,
+    issue: &GitHubIssue,
+) -> Result<()> {
+    let _ = run_command_capture(
+        gh_bin,
+        &[
+            "label",
+            "create",
+            "format-issue",
+            "--color",
+            "D93F0B",
+            "--description",
+            "Issue does not match the required prompt-contract format",
+        ],
+        repo_root,
+    );
+
+    run_command_capture(
+        gh_bin,
+        &[
+            "issue",
+            "edit",
+            &issue.number.to_string(),
+            "--repo",
+            repo,
+            "--add-label",
+            "format-issue",
+        ],
+        repo_root,
+    )?;
+
+    Ok(())
+}
+
+fn ensure_blocked_dependency_label(
+    gh_bin: &str,
+    repo_root: &Path,
+    repo: &str,
+    issue: &GitHubIssue,
+) -> Result<()> {
+    let _ = run_command_capture(
+        gh_bin,
+        &[
+            "label",
+            "create",
+            "blocked-dependent",
+            "--color",
+            "B60205",
+            "--description",
+            "Issue depends on unresolved prior work and should wait for that dependency",
+        ],
+        repo_root,
+    );
+
+    run_command_capture(
+        gh_bin,
+        &[
+            "issue",
+            "edit",
+            &issue.number.to_string(),
+            "--repo",
+            repo,
+            "--add-label",
+            "blocked-dependent",
+        ],
+        repo_root,
+    )?;
+
+    Ok(())
+}
+
+fn dependency_issue_numbers(body: &str) -> Vec<u64> {
+    let mut numbers = Vec::new();
+
+    for line in body.lines() {
+        let lower = line.to_ascii_lowercase();
+        if let Some(index) = lower.find("depends on:") {
+            let remainder = &line[index + "depends on:".len()..];
+            numbers.extend(extract_issue_numbers(remainder));
+        }
+    }
+
+    numbers.sort_unstable();
+    numbers.dedup();
+    numbers
+}
+
+fn extract_issue_numbers(text: &str) -> Vec<u64> {
+    let mut numbers = Vec::new();
+    let mut chars = text.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch != '#' {
+            continue;
+        }
+
+        let mut digits = String::new();
+        while let Some(next) = chars.peek() {
+            if next.is_ascii_digit() {
+                digits.push(*next);
+                chars.next();
+            } else {
+                break;
+            }
+        }
+
+        if let Ok(number) = digits.parse::<u64>() {
+            numbers.push(number);
+        }
+    }
+
+    numbers
 }
 
 fn has_prompt_contract_sections(body: &str) -> bool {

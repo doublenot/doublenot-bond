@@ -560,7 +560,7 @@ fn default_identity_contents(repo_root: &Path) -> String {
         .unwrap_or("this repository");
 
     format!(
-        "# Identity\n\n## Repository\n- Name: {repo_name}\n- Purpose: Describe what this repository is for.\n\n## Allowed Work\n- Source code\n- Tests\n- Documentation\n\n## Guardrails\n- Confirm what the agent should never modify without human approval.\n- Record any repo-specific rules here.\n"
+        "# Identity\n\n## Repository\n- Name: {repo_name}\n- Purpose: Describe what this repository is for.\n\n## Allowed Work\n- Source code\n- Tests\n- Documentation\n- Repo-local runtime bootstrap and issue-intake workflow files\n\n## Guardrails\n- Treat `.bond/IDENTITY.md`, `.bond/PERSONALITY.md`, and `.bond/config.yml` as operator-owned files. Update them only through deliberate setup or direct human instruction.\n- Respect the configured issue intake rules. Do not bypass label requirements or prompt-contract expectations to create your own work queue.\n- Regenerate `.github/workflows/bond.yml` intentionally through the setup flow instead of drifting it with casual manual edits.\n- If work is blocked on human judgment, credentials, policy, or manual configuration, open a GitHub issue labeled `needs-human` with the exact request. Those issues are for humans only and are outside the bond's intake queue.\n"
     )
 }
 
@@ -571,7 +571,7 @@ fn default_personality_contents(repo_root: &Path) -> String {
         .unwrap_or("this repository");
 
     format!(
-        "# Personality\n\nThe bond for {repo_name} should communicate clearly, keep changes focused, and verify work before claiming success.\n\n## Tone\n- Direct\n- Practical\n- Calm\n\n## Collaboration\n- Prefer small, auditable changes\n- Explain blockers plainly\n- Respect the repository's existing style\n"
+        "# Personality\n\nThe bond for {repo_name} should operate like a careful repository mechanic: clear about scope, disciplined about state, and willing to stop and escalate when automation should not guess.\n\n## Tone\n- Direct\n- Practical\n- Calm\n- Operator-aware\n\n## Collaboration\n- Prefer small, auditable changes\n- Explain blockers plainly\n- Respect the repository's existing style\n- Treat `.bond` history, issue state, and journal entries as part of the working record\n- When blocked by missing human input, open a `needs-human` issue with a specific request instead of improvising around the gap\n"
     )
 }
 
@@ -695,11 +695,11 @@ fn default_setup_issue_template_contents(repo_root: &Path) -> String {
 }
 
 fn default_task_issue_template_contents() -> String {
-    "---\nname: Bond Task\nabout: Give the bond a task using the prompt-contract structure\ntitle: \"Task: \"\nlabels: bond-task\nassignees: ''\n---\n\n## Inputs\n\nDescribe the codebase context, relevant files, and what the bond should look at first.\n\n## Expected Output\n\nDescribe the desired code, docs, or behavior change.\n\n## Constraints\n\nList any architectural rules, scope boundaries, or forbidden approaches.\n\n## Edge Cases\n\nList failure modes, tricky cases, or compatibility concerns.\n\n## Acceptance Criteria\n\nList the concrete checks that determine when this task is complete.\n".to_string()
+    "---\nname: Bond Task\nabout: Give the bond a task using the prompt-contract structure\ntitle: \"Task: \"\nlabels: bond-task\nassignees: ''\n---\n\n## Inputs\n\nDescribe the codebase context, relevant files, and what the bond should look at first.\n\n## Expected Output\n\nDescribe the desired code, docs, or behavior change.\n\n## Constraints\n\nList any architectural rules, scope boundaries, or forbidden approaches.\n\nIf this task depends on earlier issue work that is not resolved yet, add a line like `Depends on: #123`.\n\n## Edge Cases\n\nList failure modes, tricky cases, or compatibility concerns.\n\n## Acceptance Criteria\n\nList the concrete checks that determine when this task is complete.\n".to_string()
 }
 
 fn default_debug_issue_template_contents() -> String {
-    "---\nname: Bond Debug\nabout: Ask the bond to diagnose and fix a bug using a debugging contract\ntitle: \"Debug: \"\nlabels: bond-task, bug\nassignees: ''\n---\n\n## Inputs\n\nDescribe the bug, failing behavior, reproduction steps, and relevant logs.\n\n## Expected Output\n\nDescribe the fix, explanation, and any tests or instrumentation you expect.\n\n## Constraints\n\nList limits on risky changes, migrations, or files the bond should avoid.\n\n## Edge Cases\n\nCall out intermittent failures, environment differences, or known false leads.\n\n## Acceptance Criteria\n\nList the exact reproduction that should stop failing and the checks that should pass afterward.\n".to_string()
+    "---\nname: Bond Debug\nabout: Ask the bond to diagnose and fix a bug using a debugging contract\ntitle: \"Debug: \"\nlabels: bond-task, bug\nassignees: ''\n---\n\n## Inputs\n\nDescribe the bug, failing behavior, reproduction steps, and relevant logs.\n\n## Expected Output\n\nDescribe the fix, explanation, and any tests or instrumentation you expect.\n\n## Constraints\n\nList limits on risky changes, migrations, or files the bond should avoid.\n\nIf this debug work depends on earlier issue work that is not resolved yet, add a line like `Depends on: #123`.\n\n## Edge Cases\n\nCall out intermittent failures, environment differences, or known false leads.\n\n## Acceptance Criteria\n\nList the exact reproduction that should stop failing and the checks that should pass afterward.\n".to_string()
 }
 
 fn default_executable_path() -> String {
