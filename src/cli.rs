@@ -84,7 +84,7 @@ impl DirectoryRestrictions {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Args {
     pub repo: Option<PathBuf>,
     pub prompt: Option<String>,
@@ -99,26 +99,6 @@ pub struct Args {
     pub bootstrap_only: bool,
     pub bond_runtime: bool,
     pub run_scheduled_issue: bool,
-}
-
-impl Default for Args {
-    fn default() -> Self {
-        Self {
-            repo: None,
-            prompt: None,
-            provider: None,
-            model: None,
-            api_key: None,
-            permissions: PermissionConfig::default(),
-            dir_restrictions: DirectoryRestrictions::default(),
-            no_color: false,
-            help: false,
-            version: false,
-            bootstrap_only: false,
-            bond_runtime: false,
-            run_scheduled_issue: false,
-        }
-    }
 }
 
 pub fn parse_args(args: Vec<String>) -> Result<Args> {

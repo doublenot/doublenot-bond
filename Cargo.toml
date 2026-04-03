@@ -22,4 +22,10 @@ tokio = { version = "1", features = ["full"] }
 yoagent = { version = "0.7.5", features = ["openapi"] }
 
 [dev-dependencies]
+cargo-husky = { version = "1.5.0", default-features = false, features = [
+  "precommit-hook",
+  "run-cargo-fmt",
+  "run-cargo-clippy",
+  "run-cargo-test",
+] }
 tempfile = "3.10.1"

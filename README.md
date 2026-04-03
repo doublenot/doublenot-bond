@@ -142,6 +142,32 @@ act pull_request -W .github/workflows/ci.yml
 
 `act` is useful for the Linux CI path in this repository, but it will not faithfully cover the macOS and Windows release jobs from `.github/workflows/release.yml`.
 
+## Git Hooks
+
+This repository uses `cargo-husky` as a Rust-native Git hook manager.
+
+After pulling the repository for the first time, run:
+
+```bash
+cargo test
+```
+
+That installs `.git/hooks/pre-commit` and makes each `git commit` run the configured Rust checks before the commit is accepted.
+
+The pre-commit hook runs the same core Rust gate used locally in CI:
+
+- `cargo fmt -- --check`
+- `cargo clippy --all-targets -- -D warnings`
+- `cargo test`
+
+If you need to skip hook installation in a particular environment, set:
+
+```bash
+CARGO_HUSKY_DONT_INSTALL_HOOKS=true
+```
+
+before running Cargo commands.
+
 ## Setup Flow
 
 The intended onboarding sequence is:
