@@ -31,8 +31,9 @@ flowchart TD
 
     subgraph Release[Tagged release workflow]
         E[push tag v*]
-        E --> E1[build matrix]
-        E --> E2[source archive job]
+        E --> E0[verify tag matches Cargo.toml version]
+        E0 --> E1[build matrix]
+        E0 --> E2[source archive job]
         E1 --> E11[Linux x86_64 archive]
         E1 --> E12[macOS x86_64 archive]
         E1 --> E13[macOS ARM64 archive]
@@ -58,6 +59,7 @@ flowchart TD
 - `make ci-local` is the closest local equivalent to the Linux CI path.
 - The release dry-run only exercises the Linux packaging path locally.
 - The tagged release workflow is the only path that publishes cross-platform archives and release assets.
+- `make release-prep VERSION=X.Y.Z` is the local step that updates `Cargo.toml` before creating the matching `vX.Y.Z` tag.
 
 ## Scheduled Bond Workflow
 

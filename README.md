@@ -100,6 +100,16 @@ The Linux release job installs `pkg-config` and `libssl-dev` explicitly because 
 
 Each release also publishes `doublenot-bond-checksums.txt`. The install scripts download that file and verify the archive checksum before extracting the binary, and every tagged release now includes a versioned source tarball.
 
+Release archives are published as GitHub Release assets, which makes them fetchable from other repositories and installers as long as they have access to this repository.
+
+Before pushing a release tag, update `Cargo.toml` with:
+
+```bash
+make release-prep VERSION=0.1.1
+```
+
+That updates `package.version` and prints the next commit and tag commands. The release workflow rejects a pushed tag if `vX.Y.Z` does not match `Cargo.toml`.
+
 For non-tag validation, run `./scripts/release-dry-run.sh`. It builds the Linux release artifact, creates a source tarball, and writes a checksum manifest under `target/release-dry-run/`.
 
 For the full local validation path, run `make ci-local`.
