@@ -65,7 +65,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A[Operator updates .bond/config.yml] --> B[/setup workflow]
+    A[Operator updates .bond/config.yml] --> B["/setup workflow"]
     B --> C[Generate .github/workflows/bond.yml]
     C --> D{GitHub trigger}
 
