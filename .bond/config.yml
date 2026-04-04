@@ -1,7 +1,7 @@
 version: 1
 executable_path: .bond/bin/doublenot-bond
 automation:
-  schedule_cron: 0 * * * *
+  schedule_cron: 0 12 * * *
   provider: openai
   model: gpt-5.4
   model_reasoning: medium
