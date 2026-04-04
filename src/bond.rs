@@ -742,8 +742,6 @@ jobs:
                 issue_branch_slug="issue"
               fi
 
-              ISSUE_NUMBER="$issue_number"
-              ISSUE_TITLE="$issue_title"
               ISSUE_BRANCH="bond/issue-$issue_number-$issue_branch_slug"
               return 0
             done
