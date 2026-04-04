@@ -373,13 +373,32 @@ fn prompt_setup_workflow_creates_bond_workflow_file() {
     assert!(workflow_text.contains("group: bond-${{ github.ref }}"));
     assert!(workflow_text.contains("cancel-in-progress: false"));
     assert!(workflow_text.contains("timeout-minutes: 30"));
+    assert!(workflow_text.contains("ref: ${{ github.ref_name }}"));
     assert!(workflow_text.contains("cargo build --locked --bin doublenot-bond"));
     assert!(workflow_text.contains("mkdir -p .bond/bin"));
     assert!(workflow_text.contains("cp target/debug/doublenot-bond .bond/bin/doublenot-bond"));
+    assert!(workflow_text.contains("git config user.name \"doublenot-bond[bot]\""));
+    assert!(workflow_text
+        .contains("git config user.email \"doublenot-bond[bbot]@users.noreply.github.com\""));
     assert!(workflow_text.contains("ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}"));
+    assert!(workflow_text.contains("GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}"));
     assert!(!workflow_text.contains("BOND_PROVIDER:"));
     assert!(!workflow_text.contains("BOND_MODEL:"));
     assert!(workflow_text.contains("./.bond/bin/doublenot-bond --repo . --run-scheduled-issue"));
+    assert!(workflow_text.contains("Resume existing issue branch"));
+    assert!(workflow_text.contains("refs/remotes/origin/$ISSUE_BRANCH"));
+    assert!(workflow_text.contains("git checkout -B \"$ISSUE_BRANCH\" \"origin/$ISSUE_BRANCH\""));
+    assert!(workflow_text.contains("git status --short"));
+    assert!(workflow_text.contains("git add -A"));
+    assert!(workflow_text.contains("git commit -m \"bond: work on #$ISSUE_NUMBER\""));
+    assert!(workflow_text.contains("git push --set-upstream origin \"$ISSUE_BRANCH\""));
+    assert!(workflow_text
+        .contains("gh pr list --head \"$ISSUE_BRANCH\" --base \"${{ github.ref_name }}\""));
+    assert!(workflow_text
+        .contains("gh pr create --base \"${{ github.ref_name }}\" --head \"$ISSUE_BRANCH\""));
+    assert!(workflow_text.contains(
+        "printf 'Closes #%s\\n\\nAutomated changes from doublenot-bond.\\n' \"$ISSUE_NUMBER\""
+    ));
     assert!(!workflow_text.contains("--provider \"$BOND_PROVIDER\""));
     assert!(!workflow_text.contains("--model \"$BOND_MODEL\""));
 }
@@ -454,8 +473,17 @@ fn prompt_setup_workflow_refresh_overwrites_existing_file() {
     assert!(workflow_text.contains("Use Gemini for scheduled monorepo work because it handles broad cross-package analysis well."));
     assert!(workflow_text.contains("cron: '15 * * * *'"));
     assert!(workflow_text.contains("timeout-minutes: 30"));
+    assert!(workflow_text.contains("ref: ${{ github.ref_name }}"));
     assert!(workflow_text.contains("cp target/debug/doublenot-bond .bond/bin/doublenot-bond"));
+    assert!(workflow_text.contains("git config user.name \"doublenot-bond[bot]\""));
+    assert!(workflow_text
+        .contains("git config user.email \"doublenot-bond[bbot]@users.noreply.github.com\""));
     assert!(workflow_text.contains("GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}"));
+    assert!(workflow_text.contains("Resume existing issue branch"));
+    assert!(workflow_text.contains("git commit -m \"bond: work on #$ISSUE_NUMBER\""));
+    assert!(workflow_text.contains("git push --set-upstream origin \"$ISSUE_BRANCH\""));
+    assert!(workflow_text
+        .contains("gh pr create --base \"${{ github.ref_name }}\" --head \"$ISSUE_BRANCH\""));
     assert!(!workflow_text.contains("BOND_PROVIDER:"));
     assert!(!workflow_text.contains("BOND_MODEL:"));
 }
@@ -2274,6 +2302,9 @@ fn prompt_issues_prompt_renders_execution_prompt_from_current_issue() {
     assert!(output.status.success(), "issues prompt should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Work on GitHub issue #12 [bond-task] Existing issue."));
+    assert!(stdout.contains(
+        "If you change files, stage and commit them with a focused git message before concluding."
+    ));
     assert!(stdout.contains("## Inputs"));
     assert!(stdout.contains("Run relevant verification before concluding."));
 }

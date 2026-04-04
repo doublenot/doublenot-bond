@@ -214,14 +214,21 @@ automation:
   model_reasoning: Use the default Claude model for scheduled repository work.
 ```
 
-The generated `.github/workflows/bond.yml` first builds `doublenot-bond` into `.bond/bin/`, then runs that repo-local executable:
+The generated `.github/workflows/bond.yml` first builds `doublenot-bond` into `.bond/bin/`, resumes an existing per-issue branch when one is already in `.bond/state.yml`, and after the run commits changes to a feature branch and opens or reuses a PR linked to the issue:
 
 ```bash
 cargo build --locked --bin doublenot-bond
 mkdir -p .bond/bin
 cp target/debug/doublenot-bond .bond/bin/doublenot-bond
 ./.bond/bin/doublenot-bond --repo . --run-scheduled-issue
+git checkout -b "bond/issue-123-short-slug"
+git add -A
+git commit -m "bond: work on #123"
+git push --set-upstream origin "bond/issue-123-short-slug"
+gh pr create --base "${GITHUB_REF_NAME}" --head "bond/issue-123-short-slug" --title "bond: resolve #123" --body "Closes #123"
 ```
+
+The generated workflow configures commits as `doublenot-bond[bot] <doublenot-bond[bbot]@users.noreply.github.com>`.
 
 When `--provider` and `--model` are omitted, `doublenot-bond` now falls back to `automation.provider` and `automation.model` from `.bond/config.yml`.
 

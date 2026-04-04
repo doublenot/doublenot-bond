@@ -7,7 +7,7 @@ name: bond
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 * * * *'
+    - cron: "0 12 * * *"
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -30,6 +30,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          ref: ${{ github.ref_name }}
 
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
@@ -48,11 +49,147 @@ jobs:
 
       - name: Configure git identity
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "doublenot-bond[bot]"
+          git config user.email "doublenot-bond[bbot]@users.noreply.github.com"
+
+      - name: Resume existing issue branch
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          read_issue_metadata() {
+            if [[ ! -f .bond/state.yml ]]; then
+              return 0
+            fi
+
+            local issue_key
+            local issue_block
+            local issue_number
+            local issue_title
+            local issue_branch_slug
+
+            for issue_key in current_issue last_issue; do
+              issue_block="$(sed -n "/^${issue_key}:$/,/^[^ ]/p" .bond/state.yml)"
+              issue_number="$(printf '%s\n' "$issue_block" | sed -n 's/^  number: //p' | head -n 1)"
+              issue_title="$(printf '%s\n' "$issue_block" | sed -n 's/^  title: //p' | head -n 1)"
+
+              if [[ -z "$issue_number" || -z "$issue_title" ]]; then
+                continue
+              fi
+
+              issue_title="${issue_title#\"}"
+              issue_title="${issue_title%\"}"
+              issue_branch_slug="$(printf '%s' "$issue_title" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]\+/-/g; s/^-//; s/-$//' | cut -c1-48)"
+              if [[ -z "$issue_branch_slug" ]]; then
+                issue_branch_slug="issue"
+              fi
+
+              ISSUE_NUMBER="$issue_number"
+              ISSUE_TITLE="$issue_title"
+              ISSUE_BRANCH="bond/issue-$issue_number-$issue_branch_slug"
+              return 0
+            done
+          }
+
+          read_issue_metadata || true
+
+          if [[ -z "${ISSUE_BRANCH:-}" ]]; then
+            echo "No persisted issue branch to resume."
+            exit 0
+          fi
+
+          git fetch origin "$ISSUE_BRANCH" || true
+
+          if git show-ref --verify --quiet "refs/remotes/origin/$ISSUE_BRANCH"; then
+            git checkout -B "$ISSUE_BRANCH" "origin/$ISSUE_BRANCH"
+          elif [[ "$(git branch --show-current)" != "$ISSUE_BRANCH" ]]; then
+            git checkout -b "$ISSUE_BRANCH"
+          fi
 
       - name: Run scheduled bond issue workflow
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: ./.bond/bin/doublenot-bond --repo . --run-scheduled-issue
+
+      - name: Commit, push, and open PR
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$(git status --short)" ]]; then
+            echo "No changes to commit."
+            exit 0
+          fi
+
+          read_issue_metadata() {
+            if [[ ! -f .bond/state.yml ]]; then
+              return 0
+            fi
+
+            local issue_key
+            local issue_block
+            local issue_number
+            local issue_title
+            local issue_branch_slug
+
+            for issue_key in current_issue last_issue; do
+              issue_block="$(sed -n "/^${issue_key}:$/,/^[^ ]/p" .bond/state.yml)"
+              issue_number="$(printf '%s\n' "$issue_block" | sed -n 's/^  number: //p' | head -n 1)"
+              issue_title="$(printf '%s\n' "$issue_block" | sed -n 's/^  title: //p' | head -n 1)"
+
+              if [[ -z "$issue_number" || -z "$issue_title" ]]; then
+                continue
+              fi
+
+              issue_title="${issue_title#\"}"
+              issue_title="${issue_title%\"}"
+              issue_branch_slug="$(printf '%s' "$issue_title" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]\+/-/g; s/^-//; s/-$//' | cut -c1-48)"
+              if [[ -z "$issue_branch_slug" ]]; then
+                issue_branch_slug="issue"
+              fi
+
+              ISSUE_NUMBER="$issue_number"
+              ISSUE_TITLE="$issue_title"
+              ISSUE_BRANCH="bond/issue-$issue_number-$issue_branch_slug"
+              return 0
+            done
+          }
+
+          read_issue_metadata || true
+
+          if [[ -z "${ISSUE_NUMBER:-}" || -z "${ISSUE_BRANCH:-}" ]]; then
+            echo "Changed files but no persisted issue metadata was found."
+            exit 1
+          fi
+
+          if [[ "$(git branch --show-current)" != "$ISSUE_BRANCH" ]]; then
+            git checkout -b "$ISSUE_BRANCH"
+          fi
+
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "No staged changes to commit."
+            exit 0
+          fi
+
+          git commit -m "bond: work on #$ISSUE_NUMBER"
+          git push --set-upstream origin "$ISSUE_BRANCH"
+
+          existing_pr="$(gh pr list --head "$ISSUE_BRANCH" --base "${{ github.ref_name }}" --json number --jq '.[0].number')"
+          if [[ -n "$existing_pr" && "$existing_pr" != "null" ]]; then
+            echo "PR #$existing_pr already exists for $ISSUE_BRANCH."
+            exit 0
+          fi
+
+          pr_title="bond: resolve #$ISSUE_NUMBER"
+          if [[ -n "${ISSUE_TITLE:-}" ]]; then
+            pr_title="$pr_title $ISSUE_TITLE"
+          fi
+
+          pr_body=$(printf 'Closes #%s\n\nAutomated changes from doublenot-bond.\n' "$ISSUE_NUMBER")
+
+          gh pr create --base "${{ github.ref_name }}" --head "$ISSUE_BRANCH" --title "$pr_title" --body "$pr_body"

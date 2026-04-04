@@ -77,7 +77,8 @@ flowchart TD
     G --> H[install pkg-config libssl-dev and Rust]
     H --> I[build doublenot-bond into .bond/bin]
     I --> J[configure git identity]
-    J --> K[run .bond/bin/doublenot-bond with run-scheduled-issue]
+    J --> J1[resume existing issue branch when present]
+    J1 --> K[run .bond/bin/doublenot-bond with run-scheduled-issue]
     K --> L{Current eligible issue already selected?}
     L -->|Yes| M[continue current issue]
     L -->|No| N[select next eligible GitHub issue]
@@ -85,11 +86,18 @@ flowchart TD
     N --> O
     O --> P[run agent against repository]
     P --> Q[update .bond state and issue state]
+    Q --> R{working tree changed?}
+    R -->|Yes| S[create or reuse issue branch]
+    S --> T[git add -A, commit, push branch]
+    T --> U[open or reuse PR with Closes #issue]
+    R -->|No| V[finish without commit]
 ```
 
 ## Scheduled Workflow Notes
 
 - The generated workflow builds from the checked-out repository source, stages the binary into `.bond/bin`, and runs that repo-local executable.
+- Before the scheduled run, the workflow resumes an existing issue branch when `.bond/state.yml` already points at active work.
+- After the scheduled run, the workflow stages tracked changes, commits them as `doublenot-bond[bot]`, pushes an issue-specific feature branch, and opens or reuses a PR linked to the GitHub issue with `Closes #...`.
 - Cron, provider, and model are rendered from `.bond/config.yml` into `.github/workflows/bond.yml`.
 - Provider API-key secret names are fixed by provider and match the runtime env lookup logic.
 - Generated workflows use a per-ref concurrency group and a 30-minute timeout to avoid overlapping scheduled runs on the same branch.

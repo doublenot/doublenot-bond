@@ -1126,7 +1126,7 @@ fn persist_current_issue_with_action(
 
 fn build_issue_execution_prompt(issue: &GitHubIssue) -> String {
     format!(
-        "Work on GitHub issue #{} [{}] {}.\n\nIssue URL: {}\n\nIssue body:\n{}\n\nInstructions:\n- Inspect the repository before changing code.\n- Follow the issue's prompt-contract sections as the task contract.\n- Make focused changes only for this issue.\n- Run relevant verification before concluding.\n- Summarize what changed, what was verified, and any blockers.",
+        "Work on GitHub issue #{} [{}] {}.\n\nIssue URL: {}\n\nIssue body:\n{}\n\nInstructions:\n- Inspect the repository before changing code.\n- Follow the issue's prompt-contract sections as the task contract.\n- Make focused changes only for this issue.\n- If you change files, stage and commit them with a focused git message before concluding.\n- Run relevant verification before concluding.\n- Summarize what changed, what was verified, and any blockers.",
         issue.number,
         issue.primary_label(),
         issue.title,

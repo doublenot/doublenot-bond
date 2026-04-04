@@ -4,6 +4,14 @@
 
 Workflow file: /home/ish/Sites/doublenot/doublenot-bond/.github/workflows/bond.yml
 
+Schedule: 0 12 * * *
+Provider: openai
+Model: gpt-5.4
+
+## Bond Workflow Refreshed
+
+Workflow file: /home/ish/Sites/doublenot/doublenot-bond/.github/workflows/bond.yml
+
 Schedule: 0 * * * *
 Provider: openai
 Model: gpt-5.4
