@@ -367,6 +367,7 @@ fn prompt_setup_workflow_creates_bond_workflow_file() {
 
     let workflow_text = fs::read_to_string(repo.join(".github/workflows/bond.yml"))
         .expect("read generated workflow");
+    serde_yaml::from_str::<Value>(&workflow_text).expect("parse generated workflow");
     assert!(!workflow_text.contains("# Model reasoning:"));
     assert!(workflow_text.contains("cron: '0 * * * *'"));
     assert!(workflow_text.contains("concurrency:"));
@@ -469,6 +470,7 @@ fn prompt_setup_workflow_refresh_overwrites_existing_file() {
 
     let workflow_text =
         fs::read_to_string(workflow_dir.join("bond.yml")).expect("read refreshed workflow");
+    serde_yaml::from_str::<Value>(&workflow_text).expect("parse refreshed workflow");
     assert!(workflow_text.contains("# Model reasoning:"));
     assert!(workflow_text.contains("Use Gemini for scheduled monorepo work because it handles broad cross-package analysis well."));
     assert!(workflow_text.contains("cron: '15 * * * *'"));
