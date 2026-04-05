@@ -42,7 +42,11 @@ fn version_flag_prints_version() {
 
 #[test]
 fn prompt_mode_without_api_key_shows_error() {
+    let temp = tempfile::tempdir().expect("tempdir");
+
     let output = bond_cmd()
+        .arg("--repo")
+        .arg(temp.path())
         .arg("--prompt")
         .arg("hello")
         .stdin(Stdio::null())

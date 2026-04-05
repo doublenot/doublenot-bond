@@ -35,6 +35,7 @@ async fn run() -> Result<()> {
     }
 
     let repo_root = cli::resolve_repo_root(args.repo.as_deref())?;
+    load_repo_env(&repo_root)?;
     let bond_paths = bond::BondPaths::new(repo_root)?;
     let created = bond_paths.bootstrap_bond_files()?;
     let bond_config = bond_paths.load_bond_config()?;
@@ -129,6 +130,17 @@ async fn run() -> Result<()> {
     repl::run_repl(&mut runtime, &agent_config).await
 }
 
+fn load_repo_env(repo_root: &std::path::Path) -> Result<()> {
+    let env_path = repo_root.join(".env");
+    if !env_path.is_file() {
+        return Ok(());
+    }
+
+    dotenvy::from_path(&env_path)
+        .with_context(|| format!("failed to load {}", env_path.display()))?;
+    Ok(())
+}
+
 fn should_respawn_into_runtime(
     current_executable: &std::path::Path,
     runtime_executable: &std::path::Path,
@@ -163,4 +175,57 @@ fn respawn_into_runtime(
         .with_context(|| format!("failed to launch {}", runtime_executable.display()))?;
 
     std::process::exit(status.code().unwrap_or(1));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::load_repo_env;
+    use std::env;
+    use std::sync::{Mutex, OnceLock};
+    use tempfile::tempdir;
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn load_repo_env_sets_missing_api_keys() {
+        let _guard = env_lock().lock().expect("lock env test");
+        let temp = tempdir().expect("tempdir");
+        std::fs::write(temp.path().join(".env"), "OPENAI_API_KEY=from-dotenv\n")
+            .expect("write .env");
+
+        unsafe {
+            env::remove_var("OPENAI_API_KEY");
+        }
+
+        load_repo_env(temp.path()).expect("load .env");
+
+        assert_eq!(env::var("OPENAI_API_KEY").as_deref(), Ok("from-dotenv"));
+
+        unsafe {
+            env::remove_var("OPENAI_API_KEY");
+        }
+    }
+
+    #[test]
+    fn load_repo_env_does_not_override_existing_api_keys() {
+        let _guard = env_lock().lock().expect("lock env test");
+        let temp = tempdir().expect("tempdir");
+        std::fs::write(temp.path().join(".env"), "OPENAI_API_KEY=from-dotenv\n")
+            .expect("write .env");
+
+        unsafe {
+            env::set_var("OPENAI_API_KEY", "from-shell");
+        }
+
+        load_repo_env(temp.path()).expect("load .env");
+
+        assert_eq!(env::var("OPENAI_API_KEY").as_deref(), Ok("from-shell"));
+
+        unsafe {
+            env::remove_var("OPENAI_API_KEY");
+        }
+    }
 }
