@@ -231,6 +231,8 @@ git push --set-upstream origin "bond/issue-123-short-slug"
 gh pr create --base "${GITHUB_REF_NAME}" --head "bond/issue-123-short-slug" --title "bond: resolve #123" --body "Closes #123"
 ```
 
+Scheduled runs only execute issue work when `.bond/state.yml` has `autonomous_enabled: true`, which `/setup complete` sets after you finish reviewing the generated `.bond` files. Until then, `--run-scheduled-issue` exits successfully with a skip message so the cron workflow remains a safe no-op.
+
 The generated workflow configures commits as `doublenot-bond[bot] <doublenot-bond[bbot]@users.noreply.github.com>`.
 
 When `--provider` and `--model` are omitted, `doublenot-bond` now falls back to `automation.provider` and `automation.model` from `.bond/config.yml`.
