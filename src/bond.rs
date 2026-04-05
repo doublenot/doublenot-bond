@@ -268,7 +268,7 @@ impl BondPaths {
         if !self.config_file.exists() {
             created_any |= write_if_missing(
                 &self.config_file,
-                &default_bond_settings_contents(&BondSettings::default()),
+                &default_bootstrap_bond_settings_contents(&BondSettings::default()),
             )?;
         }
 
@@ -604,7 +604,7 @@ fn default_automation_model_reasoning() -> String {
     String::new()
 }
 
-fn default_bond_settings_contents(settings: &BondSettings) -> String {
+fn default_bootstrap_bond_settings_contents(settings: &BondSettings) -> String {
     format!(
         "version: {}\nexecutable_path: {}\nautomation:\n  schedule_cron: {}\n  provider: {}\n  model: {}\n  model_reasoning: {}\ncommands:\n  # Add repo-specific test commands before using /test or scheduled verification.\n  test: []\n  # Add repo-specific lint commands before using /lint or scheduled verification.\n  lint: []\nissues:\n  eligible_labels:\n{}  priority_labels:\n{}  require_prompt_contract: {}\n  issue_history_limit: {}\n",
         settings.version,
