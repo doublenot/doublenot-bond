@@ -867,7 +867,7 @@ fn workflow_verification_commands(commands: &WorkflowCommands) -> String {
     lines.extend(render_workflow_command_group("test", &commands.test));
 
     if lines.is_empty() {
-        return "          echo \"No verification commands configured.\"\n".to_string();
+        return "          echo \"Verification required but no commands configured. Add commands.test or commands.lint to .bond/config.yml.\"\n          exit 1\n".to_string();
     }
 
     lines.join("\n") + "\n"

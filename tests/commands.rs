@@ -385,7 +385,8 @@ fn prompt_setup_workflow_creates_bond_workflow_file() {
     assert!(workflow_text.contains("./.bond/bin/doublenot-bond --repo . --run-scheduled-issue"));
     assert!(workflow_text.contains("Resume existing issue branch"));
     assert!(workflow_text.contains("Verify repo changes before commit"));
-    assert!(workflow_text.contains("No verification commands configured."));
+    assert!(workflow_text.contains("Verification required but no commands configured."));
+    assert!(workflow_text.contains("exit 1"));
     let verify_index = workflow_text
         .find("Verify repo changes before commit")
         .expect("verify step present");
@@ -490,7 +491,8 @@ fn prompt_setup_workflow_refresh_overwrites_existing_file() {
     assert!(workflow_text.contains("GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}"));
     assert!(workflow_text.contains("Resume existing issue branch"));
     assert!(workflow_text.contains("Verify repo changes before commit"));
-    assert!(workflow_text.contains("No verification commands configured."));
+    assert!(workflow_text.contains("Verification required but no commands configured."));
+    assert!(workflow_text.contains("exit 1"));
     assert!(workflow_text.contains("git commit -m \"bond: work on #$ISSUE_NUMBER\""));
     assert!(workflow_text.contains("git push --set-upstream origin \"$ISSUE_BRANCH\""));
     assert!(workflow_text
