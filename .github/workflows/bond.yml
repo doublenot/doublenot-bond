@@ -121,6 +121,8 @@ jobs:
           fi
 
           echo "Running configured lint commands."
+          printf '> %s\n' 'cargo fmt'
+          'cargo' 'fmt'
           printf '> %s\n' 'cargo fmt -- --check'
           'cargo' 'fmt' '--' '--check'
           printf '> %s\n' 'cargo clippy --all-targets -- -D warnings'

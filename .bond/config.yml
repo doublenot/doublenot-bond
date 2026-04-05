@@ -15,6 +15,10 @@ commands:
     - program: cargo
       args:
         - fmt
+      description: cargo fmt
+    - program: cargo
+      args:
+        - fmt
         - --
         - --check
       description: cargo fmt -- --check

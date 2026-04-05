@@ -443,12 +443,18 @@ fn schedule_description_to_cron(description: &str) -> Result<String> {
     let normalized = description.trim().to_ascii_lowercase();
 
     match normalized.as_str() {
+        "every 15 minutes" => Ok("*/15 * * * *".to_string()),
+        "every 30 minutes" => Ok("*/30 * * * *".to_string()),
         "every hour" | "hourly" => Ok("0 * * * *".to_string()),
+        "every 2 hours" => Ok("0 */2 * * *".to_string()),
         "every 6 hours" => Ok("0 */6 * * *".to_string()),
+        "every 8 hours" => Ok("0 */8 * * *".to_string()),
         "every 12 hours" => Ok("0 */12 * * *".to_string()),
         "every day" | "daily" => Ok("0 0 * * *".to_string()),
+        "every week" | "weekly" => Ok("0 0 * * 0".to_string()),
+        "every month" | "monthly" => Ok("0 0 1 * *".to_string()),
         _ => bail!(
-            "Unsupported schedule description: {description}. Supported examples: 'every hour', 'every 6 hours', 'every 12 hours', 'daily'."
+            "Unsupported schedule description: {description}. Supported examples: 'every 15 minutes', 'every 30 minutes', 'every hour', 'every 2 hours', 'every 6 hours', 'every 8 hours', 'every 12 hours', 'daily', 'weekly', 'monthly'."
         ),
     }
 }
