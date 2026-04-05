@@ -200,7 +200,7 @@ fn prompt_status_accepts_matching_automation_provider_and_model() {
 }
 
 #[test]
-fn prompt_test_runs_default_configured_workflow() {
+fn prompt_test_fails_when_default_commands_are_unconfigured() {
     let temp = tempdir().expect("tempdir");
     let repo = temp.path();
 
@@ -225,14 +225,11 @@ fn prompt_test_runs_default_configured_workflow() {
         .expect("run doublenot-bond");
 
     assert!(
-        output.status.success(),
-        "default configured /test should succeed"
+        !output.status.success(),
+        "default placeholder /test should fail until commands are configured"
     );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("> cargo test"),
-        "stdout should show configured test command: {stdout}"
-    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("No commands configured for this workflow"));
 }
 
 #[test]
@@ -387,6 +384,16 @@ fn prompt_setup_workflow_creates_bond_workflow_file() {
     assert!(!workflow_text.contains("BOND_MODEL:"));
     assert!(workflow_text.contains("./.bond/bin/doublenot-bond --repo . --run-scheduled-issue"));
     assert!(workflow_text.contains("Resume existing issue branch"));
+    assert!(workflow_text.contains("Verify repo changes before commit"));
+    assert!(workflow_text.contains("No verification commands configured."));
+    let verify_index = workflow_text
+        .find("Verify repo changes before commit")
+        .expect("verify step present");
+    let git_add_index = workflow_text.find("git add -A").expect("git add present");
+    assert!(
+        verify_index < git_add_index,
+        "verification should happen before staging"
+    );
     assert!(workflow_text.contains("refs/remotes/origin/$ISSUE_BRANCH"));
     assert!(workflow_text.contains("git checkout -B \"$ISSUE_BRANCH\" \"origin/$ISSUE_BRANCH\""));
     assert!(workflow_text.contains("git status --short"));
@@ -482,6 +489,8 @@ fn prompt_setup_workflow_refresh_overwrites_existing_file() {
         .contains("git config user.email \"doublenot-bond[bbot]@users.noreply.github.com\""));
     assert!(workflow_text.contains("GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}"));
     assert!(workflow_text.contains("Resume existing issue branch"));
+    assert!(workflow_text.contains("Verify repo changes before commit"));
+    assert!(workflow_text.contains("No verification commands configured."));
     assert!(workflow_text.contains("git commit -m \"bond: work on #$ISSUE_NUMBER\""));
     assert!(workflow_text.contains("git push --set-upstream origin \"$ISSUE_BRANCH\""));
     assert!(workflow_text
@@ -755,6 +764,122 @@ fn prompt_lint_fails_when_no_commands_are_configured() {
     assert!(!output.status.success(), "empty lint config should fail");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("No commands configured for this workflow"));
+}
+
+#[test]
+fn prompt_lint_fails_when_commands_are_omitted() {
+    let temp = tempdir().expect("tempdir");
+    let repo = temp.path();
+
+    let config_dir = repo.join(".bond");
+    fs::create_dir_all(&config_dir).expect("create .bond directory");
+    fs::write(
+        config_dir.join("config.yml"),
+        "version: 1\nconfigured: false\nautonomous_enabled: false\nexecutable_path: .bond/bin/doublenot-bond\nsetup_issue: null\n",
+    )
+    .expect("write config");
+
+    let output = bond_cmd()
+        .arg("--repo")
+        .arg(repo)
+        .arg("--bond-runtime")
+        .arg("--provider")
+        .arg("ollama")
+        .arg("--prompt")
+        .arg("/lint")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run doublenot-bond");
+
+    assert!(
+        !output.status.success(),
+        "missing commands config should fail"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("No commands configured for this workflow"));
+}
+
+#[test]
+fn prompt_lint_fails_when_commands_are_null() {
+    let temp = tempdir().expect("tempdir");
+    let repo = temp.path();
+
+    let config_dir = repo.join(".bond");
+    fs::create_dir_all(&config_dir).expect("create .bond directory");
+    fs::write(
+        config_dir.join("config.yml"),
+        "version: 1\nconfigured: false\nautonomous_enabled: false\nexecutable_path: .bond/bin/doublenot-bond\nsetup_issue: null\ncommands: null\n",
+    )
+    .expect("write config");
+
+    let output = bond_cmd()
+        .arg("--repo")
+        .arg(repo)
+        .arg("--bond-runtime")
+        .arg("--provider")
+        .arg("ollama")
+        .arg("--prompt")
+        .arg("/lint")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run doublenot-bond");
+
+    assert!(!output.status.success(), "null commands config should fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("No commands configured for this workflow"));
+}
+
+#[test]
+fn prompt_test_preserves_configured_test_when_lint_is_null() {
+    let temp = tempdir().expect("tempdir");
+    let repo = temp.path();
+
+    let config_dir = repo.join(".bond");
+    fs::create_dir_all(&config_dir).expect("create .bond directory");
+    fs::write(
+        config_dir.join("config.yml"),
+        "version: 1\nconfigured: false\nautonomous_enabled: false\nexecutable_path: .bond/bin/doublenot-bond\nsetup_issue: null\ncommands:\n  test:\n    - program: sh\n      args:\n        - -c\n        - 'printf partial-config-test\\n'\n      description: partial config test\n  lint: null\n",
+    )
+    .expect("write config");
+
+    let test_output = bond_cmd()
+        .arg("--repo")
+        .arg(repo)
+        .arg("--bond-runtime")
+        .arg("--provider")
+        .arg("ollama")
+        .arg("--prompt")
+        .arg("/test")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run doublenot-bond /test");
+
+    assert!(
+        test_output.status.success(),
+        "configured test command should still run when lint is null"
+    );
+    let test_stdout = String::from_utf8_lossy(&test_output.stdout);
+    assert!(test_stdout.contains("partial config test"));
+    assert!(test_stdout.contains("partial-config-test"));
+
+    let lint_output = bond_cmd()
+        .arg("--repo")
+        .arg(repo)
+        .arg("--bond-runtime")
+        .arg("--provider")
+        .arg("ollama")
+        .arg("--prompt")
+        .arg("/lint")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run doublenot-bond /lint");
+
+    assert!(
+        !lint_output.status.success(),
+        "null lint config should fail"
+    );
+    let lint_stderr = String::from_utf8_lossy(&lint_output.stderr);
+    assert!(lint_stderr.contains("No commands configured for this workflow"));
 }
 
 #[test]

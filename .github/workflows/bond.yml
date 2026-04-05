@@ -7,7 +7,7 @@ name: bond
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 12 * * *"
+    - cron: '0 12 * * *'
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -109,6 +109,26 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: ./.bond/bin/doublenot-bond --repo . --run-scheduled-issue
+
+      - name: Verify repo changes before commit
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$(git status --short)" ]]; then
+            echo "No changes to verify."
+            exit 0
+          fi
+
+          echo "Running configured lint commands."
+          printf '> %s\n' 'cargo fmt -- --check'
+          'cargo' 'fmt' '--' '--check'
+          printf '> %s\n' 'cargo clippy --all-targets -- -D warnings'
+          'cargo' 'clippy' '--all-targets' '--' '-D' 'warnings'
+          echo "Running configured test commands."
+          printf '> %s\n' 'cargo test'
+          'cargo' 'test'
+
 
       - name: Commit, push, and open PR
         shell: bash

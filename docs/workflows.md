@@ -96,8 +96,9 @@ flowchart TD
 ## Scheduled Workflow Notes
 
 - The generated workflow builds from the checked-out repository source, stages the binary into `.bond/bin`, and runs that repo-local executable.
+- New `.bond/config.yml` bootstrap output leaves `commands.test` and `commands.lint` as empty arrays with guidance comments, so operators must declare repo-specific verification commands before relying on `/test`, `/lint`, or scheduled verification.
 - Before the scheduled run, the workflow resumes an existing issue branch when `.bond/state.yml` already points at active work.
-- After the scheduled run, the workflow stages tracked changes, commits them as `doublenot-bond[bot]`, pushes an issue-specific feature branch, and opens or reuses a PR linked to the GitHub issue with `Closes #...`.
+- After the scheduled run, the workflow runs configured `commands.lint` and `commands.test` checks from `.bond/config.yml` when there are changes to publish, then stages tracked changes, commits them as `doublenot-bond[bot]`, pushes an issue-specific feature branch, and opens or reuses a PR linked to the GitHub issue with `Closes #...`.
 - Cron, provider, and model are rendered from `.bond/config.yml` into `.github/workflows/bond.yml`.
 - Provider API-key secret names are fixed by provider and match the runtime env lookup logic.
 - Generated workflows use a per-ref concurrency group and a 30-minute timeout to avoid overlapping scheduled runs on the same branch.

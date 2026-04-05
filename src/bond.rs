@@ -1,6 +1,6 @@
 use crate::cli;
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use time::format_description::well_known::Rfc3339;
@@ -78,9 +78,9 @@ pub struct RepoCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowCommands {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub test: Vec<RepoCommand>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub lint: Vec<RepoCommand>,
 }
 
@@ -132,7 +132,7 @@ pub struct BondSettings {
     pub executable_path: String,
     #[serde(default)]
     pub automation: AutomationSettings,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub commands: WorkflowCommands,
     #[serde(default)]
     pub issues: IssueWorkflow,
@@ -178,7 +178,7 @@ pub struct BondConfig {
     pub current_issue: Option<CurrentIssue>,
     #[serde(default)]
     pub issue_history: Vec<CurrentIssue>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub commands: WorkflowCommands,
     #[serde(default)]
     pub issues: IssueWorkflow,
@@ -266,8 +266,10 @@ impl BondPaths {
         created_any |= write_if_missing(&self.journal_file, &default_journal_contents())?;
 
         if !self.config_file.exists() {
-            self.save_bond_settings(&BondSettings::default())?;
-            created_any = true;
+            created_any |= write_if_missing(
+                &self.config_file,
+                &default_bond_settings_contents(&BondSettings::default()),
+            )?;
         }
 
         if !self.state_file.exists() {
@@ -311,7 +313,7 @@ impl BondPaths {
             .with_context(|| format!("failed to create {}", self.github_workflows_dir.display()))?;
 
         let settings = self.load_bond_settings()?;
-        let contents = default_bond_workflow_contents(&settings.automation);
+        let contents = default_bond_workflow_contents(&settings);
 
         if force {
             fs::write(&self.bond_workflow_file, contents).with_context(|| {
@@ -425,12 +427,6 @@ impl BondPaths {
 
         set_executable_permissions(&target)?;
         Ok(true)
-    }
-
-    pub fn save_bond_settings(&self, settings: &BondSettings) -> Result<()> {
-        let text = serde_yaml::to_string(settings).context("failed to serialize bond settings")?;
-        fs::write(&self.config_file, text)
-            .with_context(|| format!("failed to write {}", self.config_file.display()))
     }
 
     pub fn save_bond_state(&self, state: &BondState) -> Result<()> {
@@ -608,31 +604,26 @@ fn default_automation_model_reasoning() -> String {
     String::new()
 }
 
+fn default_bond_settings_contents(settings: &BondSettings) -> String {
+    format!(
+        "version: {}\nexecutable_path: {}\nautomation:\n  schedule_cron: {}\n  provider: {}\n  model: {}\n  model_reasoning: {}\ncommands:\n  # Add repo-specific test commands before using /test or scheduled verification.\n  test: []\n  # Add repo-specific lint commands before using /lint or scheduled verification.\n  lint: []\nissues:\n  eligible_labels:\n{}  priority_labels:\n{}  require_prompt_contract: {}\n  issue_history_limit: {}\n",
+        settings.version,
+        yaml_single_quoted(&settings.executable_path),
+        yaml_single_quoted(&settings.automation.schedule_cron),
+        yaml_single_quoted(&settings.automation.provider),
+        yaml_single_quoted(&settings.automation.model),
+        yaml_single_quoted(&settings.automation.model_reasoning),
+        render_yaml_string_list(&settings.issues.eligible_labels, 4),
+        render_yaml_string_list(&settings.issues.priority_labels, 4),
+        settings.issues.require_prompt_contract,
+        settings.issues.issue_history_limit,
+    )
+}
+
 fn default_workflow_commands() -> WorkflowCommands {
     WorkflowCommands {
-        test: vec![RepoCommand {
-            program: "cargo".to_string(),
-            args: vec!["test".to_string()],
-            description: "cargo test".to_string(),
-        }],
-        lint: vec![
-            RepoCommand {
-                program: "cargo".to_string(),
-                args: vec!["fmt".to_string(), "--".to_string(), "--check".to_string()],
-                description: "cargo fmt -- --check".to_string(),
-            },
-            RepoCommand {
-                program: "cargo".to_string(),
-                args: vec![
-                    "clippy".to_string(),
-                    "--all-targets".to_string(),
-                    "--".to_string(),
-                    "-D".to_string(),
-                    "warnings".to_string(),
-                ],
-                description: "cargo clippy --all-targets -- -D warnings".to_string(),
-            },
-        ],
+        test: Vec::new(),
+        lint: Vec::new(),
     }
 }
 
@@ -645,9 +636,9 @@ fn default_issue_workflow() -> IssueWorkflow {
     }
 }
 
-fn default_bond_workflow_contents(automation: &AutomationSettings) -> String {
-    let provider = automation.provider.trim();
-    let model_reasoning_comments = workflow_comment_block(&automation.model_reasoning);
+fn default_bond_workflow_contents(settings: &BondSettings) -> String {
+    let provider = settings.automation.provider.trim();
+    let model_reasoning_comments = workflow_comment_block(&settings.automation.model_reasoning);
     let api_key_env = cli::provider_api_key_env(provider)
         .map(|env| {
             format!(
@@ -656,6 +647,7 @@ fn default_bond_workflow_contents(automation: &AutomationSettings) -> String {
             )
         })
         .unwrap_or_default();
+    let verification_commands = workflow_verification_commands(&settings.commands);
 
     format!(
         r##"# Generated by doublenot-bond from .bond/config.yml.
@@ -767,6 +759,18 @@ jobs:
           GH_TOKEN: ${{{{ secrets.GITHUB_TOKEN }}}}
 {api_key_env}        run: ./.bond/bin/doublenot-bond --repo . --run-scheduled-issue
 
+      - name: Verify repo changes before commit
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$(git status --short)" ]]; then
+            echo "No changes to verify."
+            exit 0
+          fi
+
+{verification_commands}
+
       - name: Commit, push, and open PR
         shell: bash
         env:
@@ -849,11 +853,75 @@ jobs:
 
           gh pr create --base "${{{{ github.ref_name }}}}" --head "$ISSUE_BRANCH" --title "$pr_title" --body "$pr_body"
 "##,
-        cron = automation.schedule_cron,
+        cron = settings.automation.schedule_cron,
         model_reasoning_comments = model_reasoning_comments,
         api_key_env = api_key_env,
+        verification_commands = verification_commands,
     )
 }
+
+fn workflow_verification_commands(commands: &WorkflowCommands) -> String {
+    let mut lines = Vec::new();
+
+    lines.extend(render_workflow_command_group("lint", &commands.lint));
+    lines.extend(render_workflow_command_group("test", &commands.test));
+
+    if lines.is_empty() {
+        return "          echo \"No verification commands configured.\"\n".to_string();
+    }
+
+    lines.join("\n") + "\n"
+}
+
+fn render_workflow_command_group(group_name: &str, commands: &[RepoCommand]) -> Vec<String> {
+    if commands.is_empty() {
+        return Vec::new();
+    }
+
+    let mut lines = vec![format!(
+        "          echo \"Running configured {group_name} commands.\""
+    )];
+    for command in commands {
+        let rendered_command = std::iter::once(command.program.as_str())
+            .chain(command.args.iter().map(String::as_str))
+            .map(shell_quote)
+            .collect::<Vec<_>>()
+            .join(" ");
+        lines.push(format!(
+            "          printf '> %s\\n' {}",
+            shell_quote(&command.description)
+        ));
+        lines.push(format!("          {rendered_command}"));
+    }
+
+    lines
+}
+
+fn shell_quote(value: &str) -> String {
+    let escaped = value.replace('\'', "'\"'\"'");
+    format!("'{escaped}'")
+}
+
+fn deserialize_null_default<'de, D, T>(deserializer: D) -> std::result::Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}
+
+fn yaml_single_quoted(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+fn render_yaml_string_list(values: &[String], indent: usize) -> String {
+    let indentation = " ".repeat(indent);
+    values
+        .iter()
+        .map(|value| format!("{indentation}- {}\n", yaml_single_quoted(value)))
+        .collect()
+}
+
 fn workflow_comment_block(reasoning: &str) -> String {
     let trimmed = reasoning.trim();
     if trimmed.is_empty() {
