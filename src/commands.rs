@@ -316,6 +316,20 @@ fn handle_setup(
         }
         "workflow" => {
             let refresh = matches!(args.get(1).copied(), Some("refresh"));
+            let remaining = if refresh { &args[2..] } else { &args[1..] };
+
+            if let Some(schedule_description) = parse_setup_workflow_schedule(remaining) {
+                let schedule_cron = schedule_description_to_cron(&schedule_description)?;
+                runtime.paths.set_schedule_cron(&schedule_cron)?;
+                runtime.refresh_config()?;
+                println!(
+                    "Updated .bond/config.yml automation.schedule_cron to: {}",
+                    runtime.config.automation.schedule_cron
+                );
+                println!("Run /setup workflow refresh to apply the new schedule to .github/workflows/bond.yml.");
+                return Ok(ReplDirective::Continue);
+            }
+
             let wrote_workflow = runtime.paths.install_bond_workflow(refresh)?;
 
             if wrote_workflow {
@@ -404,6 +418,39 @@ pub fn prepare_scheduled_issue_prompt(runtime: &mut BondRuntimeContext) -> Resul
     }
 
     Ok(None)
+}
+
+fn parse_setup_workflow_schedule(args: &[&str]) -> Option<String> {
+    args.iter()
+        .position(|arg| *arg == "schedule")
+        .and_then(|index| {
+            let description = args
+                .iter()
+                .skip(index + 1)
+                .copied()
+                .collect::<Vec<_>>()
+                .join(" ");
+            let trimmed = description.trim().trim_matches('"').trim_matches('\'');
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        })
+}
+
+fn schedule_description_to_cron(description: &str) -> Result<String> {
+    let normalized = description.trim().to_ascii_lowercase();
+
+    match normalized.as_str() {
+        "every hour" | "hourly" => Ok("0 * * * *".to_string()),
+        "every 6 hours" => Ok("0 */6 * * *".to_string()),
+        "every 12 hours" => Ok("0 */12 * * *".to_string()),
+        "every day" | "daily" => Ok("0 0 * * *".to_string()),
+        _ => bail!(
+            "Unsupported schedule description: {description}. Supported examples: 'every hour', 'every 6 hours', 'every 12 hours', 'daily'."
+        ),
+    }
 }
 
 fn handle_git(

@@ -20,6 +20,12 @@ https://github.com/doublenot/doublenot-bond/issues/1
 
 ## Scheduled Issue Execution Started
 
+Continuing issue #1 [bond-task] Task: Add more parameters to the "/setup workflow" slash command from the scheduled workflow.
+
+https://github.com/doublenot/doublenot-bond/issues/1
+
+## Scheduled Issue Execution Started
+
 Selected issue #1 [bond-task] Task: Add more parameters to the "/setup workflow" slash command from the scheduled workflow.
 
 https://github.com/doublenot/doublenot-bond/issues/1

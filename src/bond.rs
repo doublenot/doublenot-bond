@@ -435,6 +435,20 @@ impl BondPaths {
             .with_context(|| format!("failed to write {}", self.state_file.display()))
     }
 
+    pub fn save_bond_settings(&self, settings: &BondSettings) -> Result<()> {
+        let text = default_bootstrap_bond_settings_contents(settings);
+        fs::write(&self.config_file, text)
+            .with_context(|| format!("failed to write {}", self.config_file.display()))
+    }
+
+    pub fn set_schedule_cron(&self, schedule_cron: &str) -> Result<BondConfig> {
+        let mut settings = self.load_bond_settings()?;
+        settings.automation.schedule_cron = schedule_cron.to_string();
+        self.save_bond_settings(&settings)?;
+        let state = self.load_bond_state()?;
+        Ok(BondConfig::from_parts(settings, state))
+    }
+
     pub fn set_configured(&self, configured: bool) -> Result<BondConfig> {
         let settings = self.load_bond_settings()?;
         let mut state = self.load_bond_state()?;

@@ -339,6 +339,83 @@ fn prompt_setup_issue_fails_without_github_remote() {
 }
 
 #[test]
+fn prompt_setup_workflow_schedule_updates_config_schedule_cron() {
+    let temp = tempdir().expect("tempdir");
+    let repo = temp.path();
+
+    let output = bond_cmd()
+        .arg("--repo")
+        .arg(repo)
+        .arg("--bond-runtime")
+        .arg("--provider")
+        .arg("ollama")
+        .arg("--prompt")
+        .arg("/setup workflow schedule 'every 6 hours'")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run doublenot-bond");
+
+    assert!(
+        output.status.success(),
+        "setup workflow schedule should exit 0"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Updated .bond/config.yml automation.schedule_cron to: 0 */6 * * *"));
+    assert!(stdout.contains("Run /setup workflow refresh to apply the new schedule"));
+
+    let config_text = fs::read_to_string(repo.join(".bond/config.yml")).expect("read config");
+    assert!(config_text.contains("schedule_cron: '0 */6 * * *'"));
+}
+
+#[test]
+fn prompt_setup_workflow_schedule_accepts_unquoted_description() {
+    let temp = tempdir().expect("tempdir");
+    let repo = temp.path();
+
+    let output = bond_cmd()
+        .arg("--repo")
+        .arg(repo)
+        .arg("--bond-runtime")
+        .arg("--provider")
+        .arg("ollama")
+        .arg("--prompt")
+        .arg("/setup workflow schedule every 6 hours")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run doublenot-bond");
+
+    assert!(
+        output.status.success(),
+        "setup workflow schedule should exit 0"
+    );
+
+    let config_text = fs::read_to_string(repo.join(".bond/config.yml")).expect("read config");
+    assert!(config_text.contains("schedule_cron: '0 */6 * * *'"));
+}
+
+#[test]
+fn prompt_setup_workflow_schedule_rejects_unknown_description() {
+    let temp = tempdir().expect("tempdir");
+    let repo = temp.path();
+
+    let output = bond_cmd()
+        .arg("--repo")
+        .arg(repo)
+        .arg("--bond-runtime")
+        .arg("--provider")
+        .arg("ollama")
+        .arg("--prompt")
+        .arg("/setup workflow schedule fortnightly")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run doublenot-bond");
+
+    assert!(!output.status.success(), "unknown schedule should fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Unsupported schedule description: fortnightly"));
+}
+
+#[test]
 fn prompt_setup_workflow_creates_bond_workflow_file() {
     let temp = tempdir().expect("tempdir");
     let repo = temp.path();
