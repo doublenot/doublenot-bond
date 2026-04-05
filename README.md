@@ -214,13 +214,16 @@ automation:
   model_reasoning: Use the default Claude model for scheduled repository work.
 ```
 
-The generated `.github/workflows/bond.yml` first builds `doublenot-bond` into `.bond/bin/`, resumes an existing per-issue branch when one is already in `.bond/state.yml`, and after the run commits changes to a feature branch and opens or reuses a PR linked to the issue:
+The generated `.github/workflows/bond.yml` first builds `doublenot-bond` into `.bond/bin/`, resumes an existing per-issue branch when one is already in `.bond/state.yml`, runs the configured `commands.lint` and `commands.test` checks from `.bond/config.yml` when the scheduled run produced changes, and only then commits changes to a feature branch and opens or reuses a PR linked to the issue:
 
 ```bash
 cargo build --locked --bin doublenot-bond
 mkdir -p .bond/bin
 cp target/debug/doublenot-bond .bond/bin/doublenot-bond
 ./.bond/bin/doublenot-bond --repo . --run-scheduled-issue
+cargo fmt -- --check
+cargo clippy --all-targets -- -D warnings
+cargo test
 git checkout -b "bond/issue-123-short-slug"
 git add -A
 git commit -m "bond: work on #123"
@@ -304,12 +307,14 @@ When `/issues sync` sees that GitHub has already closed the current issue, it cl
 
 ## Workflow Commands
 
-The default `.bond/config.yml` assumes a Rust repository and configures:
+New `.bond/config.yml` files start with placeholder command arrays:
 
-- `commands.test`: `cargo test`
-- `commands.lint`: `cargo fmt -- --check` and `cargo clippy --all-targets -- -D warnings`
+- `commands.test: []`
+- `commands.lint: []`
 
-These can be replaced with repository-specific commands. `/test` and `/lint` only run what is explicitly configured there.
+The generated config includes nearby comments telling the operator to fill those arrays with repository-specific commands before using `/test`, `/lint`, or scheduled verification. Empty arrays remain intentionally incomplete, so `/test` and `/lint` will fail until real commands are configured.
+
+Configured repositories continue to use exactly the commands declared in `.bond/config.yml`.
 
 Example for a Node repository:
 
@@ -403,7 +408,7 @@ issues:
   issue_history_limit: 20
 ```
 
-The key rule is that `doublenot-bond` only runs the commands you declare here. If a repository uses `make`, `just`, `tox`, `uv`, `pnpm`, or any other toolchain, encode that explicitly in `.bond/config.yml` rather than assuming Rust defaults.
+The key rule is that `doublenot-bond` only runs the commands you declare here. If a repository uses `make`, `just`, `tox`, `uv`, `pnpm`, or any other toolchain, encode that explicitly in `.bond/config.yml` rather than relying on placeholder defaults.
 
 ## Restrictions
 

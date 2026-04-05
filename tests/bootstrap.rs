@@ -148,7 +148,7 @@ fn bootstrap_only_writes_default_config_and_state() {
             .and_then(|commands| commands.get("test"))
             .and_then(Value::as_sequence)
             .map(Vec::len),
-        Some(1)
+        Some(0)
     );
     assert_eq!(
         config
@@ -156,7 +156,23 @@ fn bootstrap_only_writes_default_config_and_state() {
             .and_then(|commands| commands.get("lint"))
             .and_then(Value::as_sequence)
             .map(Vec::len),
-        Some(2)
+        Some(0)
+    );
+    assert!(
+        config_text.contains("Add repo-specific test commands"),
+        "config should explain how to fill in test commands"
+    );
+    assert!(
+        config_text.contains("Add repo-specific lint commands"),
+        "config should explain how to fill in lint commands"
+    );
+    assert!(
+        !config_text.contains("cargo test"),
+        "bootstrap config should not contain Rust-specific test defaults"
+    );
+    assert!(
+        !config_text.contains("cargo clippy"),
+        "bootstrap config should not contain Rust-specific lint defaults"
     );
     assert_eq!(
         config
