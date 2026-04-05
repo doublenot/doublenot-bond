@@ -1,5 +1,5 @@
 configured: true
-autonomous_enabled: true
+autonomous_enabled: false
 setup_issue: null
 last_issue:
   number: 1
