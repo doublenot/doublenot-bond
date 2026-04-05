@@ -75,6 +75,13 @@ async fn run() -> Result<()> {
     let agent_config = agent::BondAgentConfig::from_args(&args, &runtime)?;
 
     if args.run_scheduled_issue {
+        if !runtime.config.autonomous_enabled {
+            println!(
+                "Scheduled automation is disabled. Use /setup complete to enable --run-scheduled-issue."
+            );
+            return Ok(());
+        }
+
         if let Some(issue_prompt) = commands::prepare_scheduled_issue_prompt(&mut runtime)? {
             let mut agent = agent_config.build_agent()?;
             prompt::run_prompt(&mut agent, &issue_prompt).await?;

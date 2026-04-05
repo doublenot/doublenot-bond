@@ -18,6 +18,17 @@ fn state_file(repo: &Path) -> std::path::PathBuf {
     repo.join(".bond/state.yml")
 }
 
+fn write_state_file(repo: &Path, configured: bool, autonomous_enabled: bool) {
+    fs::create_dir_all(repo.join(".bond")).expect("create .bond directory");
+    fs::write(
+        state_file(repo),
+        format!(
+            "configured: {configured}\nautonomous_enabled: {autonomous_enabled}\nsetup_issue: null\nlast_issue: null\ncurrent_issue: null\nissue_history: []\n"
+        ),
+    )
+    .expect("write state");
+}
+
 #[test]
 fn prompt_tree_command_runs_without_api_key() {
     let temp = tempdir().expect("tempdir");
@@ -528,6 +539,8 @@ fn scheduled_run_without_eligible_issue_skips_setup_warning() {
         "git remote add origin should succeed"
     );
 
+    write_state_file(repo, true, true);
+
     let fake_gh = repo.join("fake-gh.sh");
     fs::write(
         &fake_gh,
@@ -563,6 +576,142 @@ fn scheduled_run_without_eligible_issue_skips_setup_warning() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stdout.contains("No eligible scheduled issue found."));
     assert!(!stderr.contains("Bond setup is not complete yet."));
+}
+
+#[test]
+fn scheduled_run_skips_cleanly_when_autonomous_execution_is_disabled() {
+    let temp = tempdir().expect("tempdir");
+    let repo = temp.path();
+
+    let init = Command::new("git")
+        .arg("init")
+        .current_dir(repo)
+        .output()
+        .expect("git init");
+    assert!(init.status.success(), "git init should succeed");
+
+    let remote = Command::new("git")
+        .args([
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/acme/widgets.git",
+        ])
+        .current_dir(repo)
+        .output()
+        .expect("git remote add origin");
+    assert!(
+        remote.status.success(),
+        "git remote add origin should succeed"
+    );
+
+    write_state_file(repo, true, false);
+
+    let fake_gh = repo.join("fake-gh.sh");
+    let gh_log = repo.join("gh.log");
+    fs::write(
+        &fake_gh,
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$BOND_GH_LOG\"\nexit 1\n",
+    )
+    .expect("write fake gh script");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut permissions = fs::metadata(&fake_gh)
+            .expect("fake gh metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&fake_gh, permissions).expect("chmod fake gh");
+    }
+
+    let output = bond_cmd()
+        .arg("--repo")
+        .arg(repo)
+        .arg("--bond-runtime")
+        .arg("--provider")
+        .arg("ollama")
+        .arg("--run-scheduled-issue")
+        .env("BOND_GH_BIN", &fake_gh)
+        .env("BOND_GH_LOG", &gh_log)
+        .stdin(Stdio::null())
+        .output()
+        .expect("run doublenot-bond");
+
+    assert!(output.status.success(), "scheduled run should exit 0");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(
+            "Scheduled automation is disabled. Use /setup complete to enable --run-scheduled-issue."
+        ),
+        "stdout: {stdout}"
+    );
+    assert!(
+        !gh_log.exists(),
+        "scheduled run should not invoke gh while autonomous mode is disabled"
+    );
+}
+
+#[test]
+fn prompt_setup_complete_enables_autonomous_execution() {
+    let temp = tempdir().expect("tempdir");
+    let repo = temp.path();
+
+    let output = bond_cmd()
+        .arg("--repo")
+        .arg(repo)
+        .arg("--bond-runtime")
+        .arg("--provider")
+        .arg("ollama")
+        .arg("--prompt")
+        .arg("/setup complete")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run doublenot-bond");
+
+    assert!(output.status.success(), "setup complete should exit 0");
+
+    let state_text = fs::read_to_string(state_file(repo)).expect("read state");
+    assert!(state_text.contains("configured: true"));
+    assert!(state_text.contains("autonomous_enabled: true"));
+}
+
+#[test]
+fn prompt_setup_reset_disables_autonomous_execution() {
+    let temp = tempdir().expect("tempdir");
+    let repo = temp.path();
+
+    let output = bond_cmd()
+        .arg("--repo")
+        .arg(repo)
+        .arg("--bond-runtime")
+        .arg("--provider")
+        .arg("ollama")
+        .arg("--prompt")
+        .arg("/setup complete")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run doublenot-bond setup complete");
+    assert!(output.status.success(), "setup complete should exit 0");
+
+    let output = bond_cmd()
+        .arg("--repo")
+        .arg(repo)
+        .arg("--bond-runtime")
+        .arg("--provider")
+        .arg("ollama")
+        .arg("--prompt")
+        .arg("/setup reset")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run doublenot-bond setup reset");
+
+    assert!(output.status.success(), "setup reset should exit 0");
+
+    let state_text = fs::read_to_string(state_file(repo)).expect("read state");
+    assert!(state_text.contains("configured: false"));
+    assert!(state_text.contains("autonomous_enabled: false"));
 }
 
 #[test]
