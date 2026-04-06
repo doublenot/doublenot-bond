@@ -9,7 +9,7 @@ use yoagent::tools::edit::EditFileTool;
 use yoagent::tools::file::{ReadFileTool, WriteFileTool};
 use yoagent::tools::list::ListFilesTool;
 use yoagent::tools::search::SearchTool;
-use yoagent::types::{AgentTool, ToolContext, ToolError, ToolResult};
+use yoagent::types::{AgentTool, ThinkingLevel, ToolContext, ToolError, ToolResult};
 
 pub struct BondAgentConfig {
     pub repo_root: std::path::PathBuf,
@@ -18,6 +18,7 @@ pub struct BondAgentConfig {
     pub provider: String,
     pub provider_source: &'static str,
     pub api_key: String,
+    pub thinking_level: ThinkingLevel,
     pub system_prompt: String,
     pub permissions: PermissionConfig,
     pub dir_restrictions: DirectoryRestrictions,
@@ -62,6 +63,7 @@ impl BondAgentConfig {
             provider,
             provider_source,
             api_key,
+            thinking_level: runtime.config.automation.thinking_effort,
             system_prompt: build_system_prompt(runtime),
             permissions: args.permissions.clone(),
             dir_restrictions: absolutize_restrictions(
@@ -85,6 +87,7 @@ impl BondAgentConfig {
             .with_system_prompt(&self.system_prompt)
             .with_model(&self.model)
             .with_api_key(&self.api_key)
+            .with_thinking(self.thinking_level)
             .with_tools(build_tools(self)))
     }
 
