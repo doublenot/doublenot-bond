@@ -115,9 +115,9 @@ fn bootstrap_only_writes_default_config_and_state() {
     assert_eq!(
         config
             .get("automation")
-            .and_then(|automation| automation.get("model_reasoning"))
+            .and_then(|automation| automation.get("thinking_effort"))
             .and_then(Value::as_str),
-        Some("")
+        Some("medium")
     );
     assert!(config.get("configured").is_none());
     assert!(config.get("last_issue").is_none());

@@ -8,6 +8,7 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use yoagent::types::ThinkingLevel;
 
 pub enum ReplDirective {
     Continue,
@@ -47,8 +48,8 @@ pub fn dispatch_command(
             );
             println!("automation_model: {}", runtime.config.automation.model);
             println!(
-                "automation_model_reasoning: {}",
-                display_optional_text(&runtime.config.automation.model_reasoning)
+                "automation_thinking_effort: {}",
+                display_thinking_effort(runtime.config.automation.thinking_effort)
             );
             println!(
                 "workflow_file: {}",
@@ -176,12 +177,13 @@ fn model_looks_compatible_with_provider(provider: &str, model: &str) -> bool {
     }
 }
 
-fn display_optional_text(value: &str) -> &str {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        "<none>"
-    } else {
-        trimmed
+fn display_thinking_effort(level: ThinkingLevel) -> &'static str {
+    match level {
+        ThinkingLevel::Off => "off",
+        ThinkingLevel::Minimal => "minimal",
+        ThinkingLevel::Low => "low",
+        ThinkingLevel::Medium => "medium",
+        ThinkingLevel::High => "high",
     }
 }
 
@@ -225,8 +227,8 @@ fn handle_setup(
             );
             println!("automation_model: {}", runtime.config.automation.model);
             println!(
-                "automation_model_reasoning: {}",
-                display_optional_text(&runtime.config.automation.model_reasoning)
+                "automation_thinking_effort: {}",
+                display_thinking_effort(runtime.config.automation.thinking_effort)
             );
             println!(
                 "workflow_file: {}",

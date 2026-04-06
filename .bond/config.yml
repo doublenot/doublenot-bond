@@ -4,7 +4,7 @@ automation:
   schedule_cron: 0 12 * * *
   provider: openai
   model: gpt-5.4
-  model_reasoning: medium
+  thinking_effort: medium
 commands:
   test:
     - program: cargo

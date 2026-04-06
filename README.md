@@ -211,7 +211,7 @@ automation:
   schedule_cron: '0 * * * *'
   provider: anthropic
   model: claude-sonnet-4-20250514
-  model_reasoning: Use the default Claude model for scheduled repository work.
+  thinking_effort: medium
 ```
 
 The generated `.github/workflows/bond.yml` first builds `doublenot-bond` into `.bond/bin/`, resumes an existing per-issue branch when one is already in `.bond/state.yml`, runs the configured `commands.lint` and `commands.test` checks from `.bond/config.yml` when the scheduled run produced changes, and only then commits changes to a feature branch and opens or reuses a PR linked to the issue:
@@ -253,7 +253,7 @@ The workflow also uses `GITHUB_TOKEN` for issue reads, comments, closes, and any
 
 Generated workflows also include a per-ref concurrency group and a 30-minute timeout so overlapping cron runs do not stack up on the same branch.
 
-If `automation.model_reasoning` is set, the generated `.github/workflows/bond.yml` carries that rationale as YAML comments at the top of the file.
+Generated `.github/workflows/bond.yml` files include the configured `automation.thinking_effort` as a YAML comment near the top of the file.
 
 ## Issue Workflow
 
@@ -299,7 +299,7 @@ Runtime settings live in `.bond/config.yml`, while mutable runtime state now liv
 
 Scheduled automation settings also live in `.bond/config.yml`. If you change the cron, provider, or model there, run `/setup workflow refresh` to rewrite `.github/workflows/bond.yml` intentionally.
 
-You can also set `automation.model_reasoning` to record why that model was chosen. `/status` and `/setup status` print that reasoning back alongside the provider/model checks.
+You can set `automation.thinking_effort` to `off`, `minimal`, `low`, `medium`, or `high`. The default is `medium`, and `/status` plus `/setup status` print the configured value alongside the provider/model checks.
 
 Recent issue retention is configurable through `.bond/config.yml` at `issues.issue_history_limit`. The default is `10`.
 
@@ -325,7 +325,7 @@ automation:
   schedule_cron: '0 */4 * * *'
   provider: openai
   model: gpt-4.1
-  model_reasoning: Prefer the default OpenAI model for broadly compatible scheduled maintenance work.
+  thinking_effort: medium
 commands:
   test:
     - program: npm
@@ -353,7 +353,7 @@ automation:
   schedule_cron: '30 */2 * * *'
   provider: anthropic
   model: claude-sonnet-4-20250514
-  model_reasoning: Prefer Claude for longer code-editing runs with strong repository context handling.
+  thinking_effort: medium
 commands:
   test:
     - program: pytest
@@ -384,7 +384,7 @@ automation:
   schedule_cron: '15 * * * *'
   provider: google
   model: gemini-2.5-pro
-  model_reasoning: Use Gemini for scheduled monorepo work because it handles broad cross-package analysis well.
+  thinking_effort: medium
 commands:
   test:
     - program: pnpm
