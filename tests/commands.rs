@@ -391,7 +391,7 @@ fn prompt_setup_workflow_creates_bond_workflow_file() {
     assert!(workflow_text.contains("cp target/debug/doublenot-bond .bond/bin/doublenot-bond"));
     assert!(workflow_text.contains("git config user.name \"doublenot-bond[bot]\""));
     assert!(workflow_text
-        .contains("git config user.email \"doublenot-bond[bbot]@users.noreply.github.com\""));
+        .contains("git config user.email \"doublenot-bond[bot]@users.noreply.github.com\""));
     assert!(workflow_text.contains("ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}"));
     assert!(workflow_text.contains("GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}"));
     assert!(!workflow_text.contains("BOND_PROVIDER:"));
@@ -420,7 +420,7 @@ fn prompt_setup_workflow_creates_bond_workflow_file() {
     assert!(workflow_text.contains("issue_number: //p"));
     assert!(workflow_text.contains("branch_name: //p"));
     assert!(workflow_text.contains("git commit -m \"bond: work on #$ISSUE_NUMBER\""));
-    assert!(workflow_text.contains("git push --set-upstream origin \"$ISSUE_BRANCH\""));
+    assert!(workflow_text.contains("git push origin \"$ISSUE_BRANCH\""));
     assert!(workflow_text
         .contains("gh pr list --head \"$ISSUE_BRANCH\" --base \"${{ github.ref_name }}\""));
     assert!(workflow_text
@@ -506,14 +506,14 @@ fn prompt_setup_workflow_refresh_overwrites_existing_file() {
     assert!(workflow_text.contains("cp target/debug/doublenot-bond .bond/bin/doublenot-bond"));
     assert!(workflow_text.contains("git config user.name \"doublenot-bond[bot]\""));
     assert!(workflow_text
-        .contains("git config user.email \"doublenot-bond[bbot]@users.noreply.github.com\""));
+        .contains("git config user.email \"doublenot-bond[bot]@users.noreply.github.com\""));
     assert!(workflow_text.contains("GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}"));
     assert!(workflow_text.contains("Verify repo changes before commit"));
     assert!(workflow_text.contains("read_scheduled_target()"));
     assert!(workflow_text.contains("Verification required but no commands configured."));
     assert!(workflow_text.contains("exit 1"));
     assert!(workflow_text.contains("git commit -m \"bond: work on #$ISSUE_NUMBER\""));
-    assert!(workflow_text.contains("git push --set-upstream origin \"$ISSUE_BRANCH\""));
+    assert!(workflow_text.contains("git push origin \"$ISSUE_BRANCH\""));
     assert!(workflow_text
         .contains("gh pr create --base \"${{ github.ref_name }}\" --head \"$ISSUE_BRANCH\""));
     assert!(!workflow_text.contains("BOND_PROVIDER:"));

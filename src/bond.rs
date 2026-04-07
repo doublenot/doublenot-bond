@@ -757,7 +757,7 @@ jobs:
       - name: Configure git identity
         run: |
           git config user.name "doublenot-bond[bot]"
-          git config user.email "doublenot-bond[bbot]@users.noreply.github.com"
+          git config user.email "doublenot-bond[bot]@users.noreply.github.com"
 
       - name: Run scheduled bond issue workflow
         env:
@@ -855,7 +855,7 @@ jobs:
           fi
 
           git commit -m "bond: work on #$ISSUE_NUMBER"
-          git push --set-upstream origin "$ISSUE_BRANCH"
+          git push origin "$ISSUE_BRANCH"
 
           existing_pr="$(gh pr list --head "$ISSUE_BRANCH" --base "${{{{ github.ref_name }}}}" --json number --jq '.[0].number')"
           if [[ -n "$existing_pr" && "$existing_pr" != "null" ]]; then

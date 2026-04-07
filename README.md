@@ -228,7 +228,7 @@ cargo test
 git checkout -b "bond/issue-123-short-slug"
 git add -A
 git commit -m "bond: work on #123"
-git push --set-upstream origin "bond/issue-123-short-slug"
+git push origin "bond/issue-123-short-slug"
 gh pr create --base "${GITHUB_REF_NAME}" --head "bond/issue-123-short-slug" --title "bond: resolve #123" --body "Closes #123"
 ```
 
@@ -242,7 +242,7 @@ Scheduled runs only execute issue work when `.bond/state.yml` has `autonomous_en
 
 When `automation.multiple_issues: true`, scheduled runs still prioritize the oldest bond PR with requested changes, but they no longer stop behind clean open PRs that are only waiting for approval or merge.
 
-The generated workflow configures commits as `doublenot-bond[bot] <doublenot-bond[bbot]@users.noreply.github.com>`.
+The generated workflow configures commits as `doublenot-bond[bot] <doublenot-bond[bot]@users.noreply.github.com>`.
 
 When `--provider` and `--model` are omitted, `doublenot-bond` now falls back to `automation.provider` and `automation.model` from `.bond/config.yml`.
 
