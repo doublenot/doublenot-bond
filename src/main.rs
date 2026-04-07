@@ -7,7 +7,7 @@ mod repl;
 
 use anyhow::{Context, Result};
 use cli::parse_args;
-use commands::{dispatch_command, ReplDirective};
+use commands::{dispatch_command, ReplDirective, ScheduledExecution};
 use std::env;
 use std::io::{self, IsTerminal, Read};
 use std::process::{Command, Stdio};
@@ -82,11 +82,17 @@ async fn run() -> Result<()> {
             return Ok(());
         }
 
-        if let Some(issue_prompt) = commands::prepare_scheduled_issue_prompt(&mut runtime)? {
-            let mut agent = agent_config.build_agent()?;
-            prompt::run_prompt(&mut agent, &issue_prompt).await?;
-        } else {
-            println!("No eligible scheduled issue found.");
+        match commands::prepare_scheduled_issue_prompt(&mut runtime)? {
+            ScheduledExecution::Prompt(issue_prompt) => {
+                let mut agent = agent_config.build_agent()?;
+                prompt::run_prompt(&mut agent, &issue_prompt).await?;
+            }
+            ScheduledExecution::Wait(message) => {
+                println!("{message}");
+            }
+            ScheduledExecution::None => {
+                println!("No eligible scheduled issue found.");
+            }
         }
         return Ok(());
     }

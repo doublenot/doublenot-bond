@@ -99,6 +99,8 @@ pub struct AutomationSettings {
     pub provider: String,
     #[serde(default = "default_automation_model")]
     pub model: String,
+    #[serde(default = "default_automation_multiple_issues")]
+    pub multiple_issues: bool,
     #[serde(
         alias = "model_reasoning",
         default = "default_automation_thinking_effort"
@@ -154,6 +156,33 @@ impl Default for BondSettings {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ScheduledTargetKind {
+    Issue,
+    PrFeedback,
+    MergeWait,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ScheduledTarget {
+    pub kind: ScheduledTargetKind,
+    #[serde(default)]
+    pub issue_number: Option<u64>,
+    #[serde(default)]
+    pub issue_title: Option<String>,
+    #[serde(default)]
+    pub issue_url: Option<String>,
+    #[serde(default)]
+    pub branch_name: Option<String>,
+    #[serde(default)]
+    pub pr_number: Option<u64>,
+    #[serde(default)]
+    pub pr_title: Option<String>,
+    #[serde(default)]
+    pub pr_url: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BondState {
     pub configured: bool,
@@ -165,6 +194,8 @@ pub struct BondState {
     pub current_issue: Option<CurrentIssue>,
     #[serde(default)]
     pub issue_history: Vec<CurrentIssue>,
+    #[serde(default)]
+    pub scheduled_target: Option<ScheduledTarget>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -182,6 +213,8 @@ pub struct BondConfig {
     pub current_issue: Option<CurrentIssue>,
     #[serde(default)]
     pub issue_history: Vec<CurrentIssue>,
+    #[serde(default)]
+    pub scheduled_target: Option<ScheduledTarget>,
     #[serde(default, deserialize_with = "deserialize_null_default")]
     pub commands: WorkflowCommands,
     #[serde(default)]
@@ -206,6 +239,7 @@ impl BondConfig {
             last_issue: state.last_issue,
             current_issue: state.current_issue,
             issue_history: state.issue_history,
+            scheduled_target: state.scheduled_target,
             commands: settings.commands,
             issues: settings.issues,
         }
@@ -375,6 +409,7 @@ impl BondPaths {
             last_issue: config.last_issue,
             current_issue: config.current_issue,
             issue_history: config.issue_history,
+            scheduled_target: config.scheduled_target,
         })
     }
 
@@ -497,6 +532,17 @@ impl BondPaths {
         Ok(BondConfig::from_parts(settings, state))
     }
 
+    pub fn set_scheduled_target(
+        &self,
+        scheduled_target: Option<ScheduledTarget>,
+    ) -> Result<BondConfig> {
+        let settings = self.load_bond_settings()?;
+        let mut state = self.load_bond_state()?;
+        state.scheduled_target = scheduled_target;
+        self.save_bond_state(&state)?;
+        Ok(BondConfig::from_parts(settings, state))
+    }
+
     pub fn append_journal_entry(&self, title: &str, body: &str) -> Result<()> {
         let existing = fs::read_to_string(&self.journal_file).unwrap_or_default();
         let mut updated = String::new();
@@ -588,6 +634,7 @@ fn default_automation_settings() -> AutomationSettings {
         schedule_cron: default_schedule_cron(),
         provider: default_automation_provider(),
         model: default_automation_model(),
+        multiple_issues: default_automation_multiple_issues(),
         thinking_effort: default_automation_thinking_effort(),
     }
 }
@@ -604,18 +651,23 @@ fn default_automation_model() -> String {
     cli::default_model_for_provider(&default_automation_provider())
 }
 
+fn default_automation_multiple_issues() -> bool {
+    false
+}
+
 fn default_automation_thinking_effort() -> ThinkingLevel {
     ThinkingLevel::Medium
 }
 
 fn default_bootstrap_bond_settings_contents(settings: &BondSettings) -> String {
     format!(
-        "version: {}\nexecutable_path: {}\nautomation:\n  schedule_cron: {}\n  provider: {}\n  model: {}\n  thinking_effort: {}\ncommands:\n  # Add repo-specific test commands before using /test or scheduled verification.\n  test: []\n  # Add repo-specific lint commands before using /lint or scheduled verification.\n  lint: []\nissues:\n  eligible_labels:\n{}  priority_labels:\n{}  require_prompt_contract: {}\n  issue_history_limit: {}\n",
+        "version: {}\nexecutable_path: {}\nautomation:\n  schedule_cron: {}\n  provider: {}\n  model: {}\n  multiple_issues: {}\n  thinking_effort: {}\ncommands:\n  # Add repo-specific test commands before using /test or scheduled verification.\n  test: []\n  # Add repo-specific lint commands before using /lint or scheduled verification.\n  lint: []\nissues:\n  eligible_labels:\n{}  priority_labels:\n{}  require_prompt_contract: {}\n  issue_history_limit: {}\n",
         settings.version,
         yaml_single_quoted(&settings.executable_path),
         yaml_single_quoted(&settings.automation.schedule_cron),
         yaml_single_quoted(&settings.automation.provider),
         yaml_single_quoted(&settings.automation.model),
+        settings.automation.multiple_issues,
         yaml_single_quoted(thinking_level_str(settings.automation.thinking_effort)),
         render_yaml_string_list(&settings.issues.eligible_labels, 4),
         render_yaml_string_list(&settings.issues.priority_labels, 4),
@@ -707,58 +759,6 @@ jobs:
           git config user.name "doublenot-bond[bot]"
           git config user.email "doublenot-bond[bbot]@users.noreply.github.com"
 
-      - name: Resume existing issue branch
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          read_issue_metadata() {{
-            if [[ ! -f .bond/state.yml ]]; then
-              return 0
-            fi
-
-            local issue_key
-            local issue_block
-            local issue_number
-            local issue_title
-            local issue_branch_slug
-
-            for issue_key in current_issue last_issue; do
-              issue_block="$(sed -n "/^${{issue_key}}:$/,/^[^ ]/p" .bond/state.yml)"
-              issue_number="$(printf '%s\n' "$issue_block" | sed -n 's/^  number: //p' | head -n 1)"
-              issue_title="$(printf '%s\n' "$issue_block" | sed -n 's/^  title: //p' | head -n 1)"
-
-              if [[ -z "$issue_number" || -z "$issue_title" ]]; then
-                continue
-              fi
-
-              issue_title="${{issue_title#\"}}"
-              issue_title="${{issue_title%\"}}"
-              issue_branch_slug="$(printf '%s' "$issue_title" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]\+/-/g; s/^-//; s/-$//' | cut -c1-48)"
-              if [[ -z "$issue_branch_slug" ]]; then
-                issue_branch_slug="issue"
-              fi
-
-              ISSUE_BRANCH="bond/issue-$issue_number-$issue_branch_slug"
-              return 0
-            done
-          }}
-
-          read_issue_metadata || true
-
-          if [[ -z "${{ISSUE_BRANCH:-}}" ]]; then
-            echo "No persisted issue branch to resume."
-            exit 0
-          fi
-
-          git fetch origin "$ISSUE_BRANCH" || true
-
-          if git show-ref --verify --quiet "refs/remotes/origin/$ISSUE_BRANCH"; then
-            git checkout -B "$ISSUE_BRANCH" "origin/$ISSUE_BRANCH"
-          elif [[ "$(git branch --show-current)" != "$ISSUE_BRANCH" ]]; then
-            git checkout -b "$ISSUE_BRANCH"
-          fi
-
       - name: Run scheduled bond issue workflow
         env:
           GH_TOKEN: ${{{{ secrets.GITHUB_TOKEN }}}}
@@ -768,6 +768,27 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+                    read_scheduled_target() {{
+                        if [[ ! -f .bond/state.yml ]]; then
+                            return 0
+                        fi
+
+                        local target_block
+                        target_block="$(sed -n '/^scheduled_target:$/,/^[^ ]/p' .bond/state.yml)"
+                        if [[ -z "$target_block" ]]; then
+                            return 0
+                        fi
+
+                        SCHEDULED_TARGET_KIND="$(printf '%s\n' "$target_block" | sed -n 's/^  kind: //p' | head -n 1)"
+                    }}
+
+                    read_scheduled_target || true
+
+                    if [[ "${{SCHEDULED_TARGET_KIND:-}}" == "merge_wait" ]]; then
+                        echo "Scheduled run is waiting for merge or approval. Skipping verification."
+                        exit 0
+                    fi
 
           if [[ -z "$(git status --short)" ]]; then
             echo "No changes to verify."
@@ -783,49 +804,42 @@ jobs:
         run: |
           set -euo pipefail
 
+                    read_scheduled_target() {{
+                        if [[ ! -f .bond/state.yml ]]; then
+                            return 0
+                        fi
+
+                        local target_block
+                        target_block="$(sed -n '/^scheduled_target:$/,/^[^ ]/p' .bond/state.yml)"
+                        if [[ -z "$target_block" ]]; then
+                            return 0
+                        fi
+
+                        SCHEDULED_TARGET_KIND="$(printf '%s\n' "$target_block" | sed -n 's/^  kind: //p' | head -n 1)"
+                        ISSUE_NUMBER="$(printf '%s\n' "$target_block" | sed -n 's/^  issue_number: //p' | head -n 1)"
+                        ISSUE_TITLE="$(printf '%s\n' "$target_block" | sed -n 's/^  issue_title: //p' | head -n 1)"
+                        ISSUE_BRANCH="$(printf '%s\n' "$target_block" | sed -n 's/^  branch_name: //p' | head -n 1)"
+
+                        ISSUE_TITLE="${{ISSUE_TITLE#\"}}"
+                        ISSUE_TITLE="${{ISSUE_TITLE%\"}}"
+                        ISSUE_BRANCH="${{ISSUE_BRANCH#\"}}"
+                        ISSUE_BRANCH="${{ISSUE_BRANCH%\"}}"
+                    }}
+
+                    read_scheduled_target || true
+
+                    if [[ "${{SCHEDULED_TARGET_KIND:-}}" == "merge_wait" ]]; then
+                        echo "Scheduled run is waiting for merge or approval. Skipping commit."
+                        exit 0
+                    fi
+
           if [[ -z "$(git status --short)" ]]; then
             echo "No changes to commit."
             exit 0
           fi
 
-          read_issue_metadata() {{
-            if [[ ! -f .bond/state.yml ]]; then
-              return 0
-            fi
-
-            local issue_key
-            local issue_block
-            local issue_number
-            local issue_title
-            local issue_branch_slug
-
-            for issue_key in current_issue last_issue; do
-              issue_block="$(sed -n "/^${{issue_key}}:$/,/^[^ ]/p" .bond/state.yml)"
-              issue_number="$(printf '%s\n' "$issue_block" | sed -n 's/^  number: //p' | head -n 1)"
-              issue_title="$(printf '%s\n' "$issue_block" | sed -n 's/^  title: //p' | head -n 1)"
-
-              if [[ -z "$issue_number" || -z "$issue_title" ]]; then
-                continue
-              fi
-
-              issue_title="${{issue_title#\"}}"
-              issue_title="${{issue_title%\"}}"
-              issue_branch_slug="$(printf '%s' "$issue_title" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]\+/-/g; s/^-//; s/-$//' | cut -c1-48)"
-              if [[ -z "$issue_branch_slug" ]]; then
-                issue_branch_slug="issue"
-              fi
-
-              ISSUE_NUMBER="$issue_number"
-              ISSUE_TITLE="$issue_title"
-              ISSUE_BRANCH="bond/issue-$issue_number-$issue_branch_slug"
-              return 0
-            done
-          }}
-
-          read_issue_metadata || true
-
           if [[ -z "${{ISSUE_NUMBER:-}}" || -z "${{ISSUE_BRANCH:-}}" ]]; then
-            echo "Changed files but no persisted issue metadata was found."
+                        echo "Changed files but no persisted scheduled target metadata was found."
             exit 1
           fi
 
@@ -939,6 +953,35 @@ fn thinking_level_str(level: ThinkingLevel) -> &'static str {
 
 fn workflow_thinking_effort_comment(level: ThinkingLevel) -> String {
     format!("# Thinking effort: {}\n", thinking_level_str(level))
+}
+
+pub fn issue_branch_name(issue_number: u64, issue_title: &str) -> String {
+    let mut slug = String::new();
+    let mut last_was_dash = false;
+
+    for ch in issue_title.chars().flat_map(char::to_lowercase) {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch);
+            last_was_dash = false;
+        } else if !last_was_dash && !slug.is_empty() {
+            slug.push('-');
+            last_was_dash = true;
+        }
+
+        if slug.len() >= 48 {
+            break;
+        }
+    }
+
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+
+    if slug.is_empty() {
+        slug.push_str("issue");
+    }
+
+    format!("bond/issue-{issue_number}-{slug}")
 }
 
 fn default_require_prompt_contract() -> bool {

@@ -115,6 +115,13 @@ fn bootstrap_only_writes_default_config_and_state() {
     assert_eq!(
         config
             .get("automation")
+            .and_then(|automation| automation.get("multiple_issues"))
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        config
+            .get("automation")
             .and_then(|automation| automation.get("thinking_effort"))
             .and_then(Value::as_str),
         Some("medium")

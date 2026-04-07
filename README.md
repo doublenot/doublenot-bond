@@ -211,10 +211,11 @@ automation:
   schedule_cron: '0 * * * *'
   provider: anthropic
   model: claude-sonnet-4-20250514
+  multiple_issues: false
   thinking_effort: medium
 ```
 
-The generated `.github/workflows/bond.yml` first builds `doublenot-bond` into `.bond/bin/`, resumes an existing per-issue branch when one is already in `.bond/state.yml`, runs the configured `commands.lint` and `commands.test` checks from `.bond/config.yml` when the scheduled run produced changes, and only then commits changes to a feature branch and opens or reuses a PR linked to the issue:
+The generated `.github/workflows/bond.yml` first builds `doublenot-bond` into `.bond/bin/`, lets `--run-scheduled-issue` select the scheduled target and check out the right branch at runtime, runs the configured `commands.lint` and `commands.test` checks from `.bond/config.yml` when the scheduled run produced changes, and only then commits changes to a feature branch and opens or reuses a PR linked to the issue:
 
 ```bash
 cargo build --locked --bin doublenot-bond
@@ -233,11 +234,19 @@ gh pr create --base "${GITHUB_REF_NAME}" --head "bond/issue-123-short-slug" --ti
 
 Scheduled runs only execute issue work when `.bond/state.yml` has `autonomous_enabled: true`, which `/setup complete` sets after you finish reviewing the generated `.bond` files. Until then, `--run-scheduled-issue` exits successfully with a skip message so the cron workflow remains a safe no-op.
 
+`automation.multiple_issues` controls whether scheduled automation may advance to new issue work while older bond PRs are still open. The default is `false`, which keeps one bond PR in flight at a time:
+
+- If the oldest open bond PR has `CHANGES_REQUESTED`, the scheduled run switches to that PR branch and works only on requested changes.
+- If the oldest open bond PR is still open but no longer blocked by requested changes, the scheduled run stops and waits for merge or approval.
+- Only when there is no open bond PR backlog does the scheduler continue the current issue or pick the next eligible issue.
+
+When `automation.multiple_issues: true`, scheduled runs still prioritize the oldest bond PR with requested changes, but they no longer stop behind clean open PRs that are only waiting for approval or merge.
+
 The generated workflow configures commits as `doublenot-bond[bot] <doublenot-bond[bbot]@users.noreply.github.com>`.
 
 When `--provider` and `--model` are omitted, `doublenot-bond` now falls back to `automation.provider` and `automation.model` from `.bond/config.yml`.
 
-That scheduled path is issue-driven. It continues the current eligible issue if one is already selected locally; otherwise it selects the next eligible GitHub issue using the same intake rules as `/issues next`, then hands the resulting execution prompt to the agent runtime.
+That scheduled path is no longer purely issue-driven. It first inspects open bond PRs, then either fixes the oldest PR with requested changes, pauses behind the oldest open bond PR in single-issue mode, or falls through to the existing current-issue or next-issue selection flow.
 
 Required repository secrets depend on the configured provider:
 

@@ -1,5 +1,5 @@
 configured: true
-autonomous_enabled: false
+autonomous_enabled: true
 setup_issue: null
 last_issue:
   number: 1
@@ -22,3 +22,4 @@ issue_history:
   label: bond-task
   last_action: scheduled
   last_action_at: 2026-04-05T04:06:51.330253716Z
+scheduled_target: null

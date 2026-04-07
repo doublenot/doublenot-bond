@@ -124,6 +124,7 @@ fn prompt_status_reports_active_and_parked_issue_summary() {
     assert!(stdout.contains("issue_posture: active=1, parked=1"));
     assert!(stdout.contains("latest_parked: #21 [bond-task] Parked issue"));
     assert!(stdout.contains("automation_thinking_effort: medium"));
+    assert!(stdout.contains("automation_multiple_issues: false"));
     assert!(stdout.contains("automation_provider_matches_runtime: false"));
     assert!(stdout.contains("automation_model_looks_valid_for_provider: true"));
 }
@@ -163,6 +164,7 @@ fn prompt_status_reports_automation_provider_and_model_validation() {
     assert!(stdout.contains("automation_provider: openai"));
     assert!(stdout.contains("automation_model: claude-sonnet-4-20250514"));
     assert!(stdout.contains("automation_thinking_effort: high"));
+    assert!(stdout.contains("automation_multiple_issues: false"));
     assert!(stdout.contains("automation_provider_matches_runtime: false"));
     assert!(stdout.contains("automation_model_looks_valid_for_provider: false"));
     assert!(stdout.contains("automation_recommended_model: gpt-4.1"));
@@ -205,6 +207,7 @@ fn prompt_status_accepts_matching_automation_provider_and_model() {
     assert!(stdout.contains("automation_provider_matches_runtime: true"));
     assert!(stdout.contains("automation_model_looks_valid_for_provider: true"));
     assert!(stdout.contains("automation_thinking_effort: medium"));
+    assert!(stdout.contains("automation_multiple_issues: false"));
     assert!(stdout.contains("automation_recommended_model: claude-sonnet-4-20250514"));
     assert!(!stdout.contains("automation_provider_warning:"));
     assert!(!stdout.contains("automation_model_warning:"));
@@ -394,8 +397,14 @@ fn prompt_setup_workflow_creates_bond_workflow_file() {
     assert!(!workflow_text.contains("BOND_PROVIDER:"));
     assert!(!workflow_text.contains("BOND_MODEL:"));
     assert!(workflow_text.contains("./.bond/bin/doublenot-bond --repo . --run-scheduled-issue"));
-    assert!(workflow_text.contains("Resume existing issue branch"));
     assert!(workflow_text.contains("Verify repo changes before commit"));
+    assert!(workflow_text.contains("read_scheduled_target()"));
+    assert!(workflow_text.contains("SCHEDULED_TARGET_KIND"));
+    assert!(workflow_text
+        .contains("Scheduled run is waiting for merge or approval. Skipping verification."));
+    assert!(
+        workflow_text.contains("Scheduled run is waiting for merge or approval. Skipping commit.")
+    );
     assert!(workflow_text.contains("Verification required but no commands configured."));
     assert!(workflow_text.contains("exit 1"));
     let verify_index = workflow_text
@@ -406,10 +415,10 @@ fn prompt_setup_workflow_creates_bond_workflow_file() {
         verify_index < git_add_index,
         "verification should happen before staging"
     );
-    assert!(workflow_text.contains("refs/remotes/origin/$ISSUE_BRANCH"));
-    assert!(workflow_text.contains("git checkout -B \"$ISSUE_BRANCH\" \"origin/$ISSUE_BRANCH\""));
     assert!(workflow_text.contains("git status --short"));
     assert!(workflow_text.contains("git add -A"));
+    assert!(workflow_text.contains("issue_number: //p"));
+    assert!(workflow_text.contains("branch_name: //p"));
     assert!(workflow_text.contains("git commit -m \"bond: work on #$ISSUE_NUMBER\""));
     assert!(workflow_text.contains("git push --set-upstream origin \"$ISSUE_BRANCH\""));
     assert!(workflow_text
@@ -499,8 +508,8 @@ fn prompt_setup_workflow_refresh_overwrites_existing_file() {
     assert!(workflow_text
         .contains("git config user.email \"doublenot-bond[bbot]@users.noreply.github.com\""));
     assert!(workflow_text.contains("GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}"));
-    assert!(workflow_text.contains("Resume existing issue branch"));
     assert!(workflow_text.contains("Verify repo changes before commit"));
+    assert!(workflow_text.contains("read_scheduled_target()"));
     assert!(workflow_text.contains("Verification required but no commands configured."));
     assert!(workflow_text.contains("exit 1"));
     assert!(workflow_text.contains("git commit -m \"bond: work on #$ISSUE_NUMBER\""));
@@ -543,7 +552,7 @@ fn scheduled_run_without_eligible_issue_skips_setup_warning() {
     let fake_gh = repo.join("fake-gh.sh");
     fs::write(
         &fake_gh,
-        "#!/bin/sh\nif [ \"$1\" = \"issue\" ] && [ \"$2\" = \"list\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nprintf 'unexpected gh invocation: %s\\n' \"$*\" >&2\nexit 1\n",
+        "#!/bin/sh\nif [ \"$1\" = \"pr\" ] && [ \"$2\" = \"list\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"issue\" ] && [ \"$2\" = \"list\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nprintf 'unexpected gh invocation: %s\\n' \"$*\" >&2\nexit 1\n",
     )
     .expect("write fake gh script");
 
@@ -575,6 +584,150 @@ fn scheduled_run_without_eligible_issue_skips_setup_warning() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stdout.contains("No eligible scheduled issue found."));
     assert!(!stderr.contains("Bond setup is not complete yet."));
+}
+
+#[test]
+fn scheduled_run_single_issue_mode_waits_behind_open_bond_pr() {
+    let temp = tempdir().expect("tempdir");
+    let repo = temp.path();
+
+    let init = Command::new("git")
+        .arg("init")
+        .current_dir(repo)
+        .output()
+        .expect("git init");
+    assert!(init.status.success(), "git init should succeed");
+
+    let remote = Command::new("git")
+        .args([
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/acme/widgets.git",
+        ])
+        .current_dir(repo)
+        .output()
+        .expect("git remote add origin");
+    assert!(
+        remote.status.success(),
+        "git remote add origin should succeed"
+    );
+
+    write_state_file(repo, true, true);
+
+    let fake_gh = repo.join("fake-gh.sh");
+    fs::write(
+        &fake_gh,
+        "#!/bin/sh\nif [ \"$1\" = \"pr\" ] && [ \"$2\" = \"list\" ]; then\n  printf '[{\"number\":31,\"title\":\"bond: resolve #12\",\"url\":\"https://github.com/acme/widgets/pull/31\",\"headRefName\":\"bond/issue-12-fix-parser\",\"reviewDecision\":\"APPROVED\",\"createdAt\":\"2026-04-05T10:00:00Z\"}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"issue\" ] && [ \"$2\" = \"view\" ]; then\n  printf '%s\\n' '{\"number\":12,\"title\":\"Fix parser\",\"body\":\"contract\",\"url\":\"https://github.com/acme/widgets/issues/12\",\"state\":\"OPEN\",\"labels\":[{\"name\":\"bond-task\"}]}'\n  exit 0\nfi\nprintf 'unexpected gh invocation: %s\\n' \"$*\" >&2\nexit 1\n",
+    )
+    .expect("write fake gh script");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut permissions = fs::metadata(&fake_gh)
+            .expect("fake gh metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&fake_gh, permissions).expect("chmod fake gh");
+    }
+
+    let output = bond_cmd()
+        .arg("--repo")
+        .arg(repo)
+        .arg("--bond-runtime")
+        .arg("--provider")
+        .arg("ollama")
+        .arg("--run-scheduled-issue")
+        .env("BOND_GH_BIN", &fake_gh)
+        .stdin(Stdio::null())
+        .output()
+        .expect("run doublenot-bond");
+
+    assert!(output.status.success(), "scheduled run should exit 0");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(
+        "Scheduled automation is waiting for merge or approval on PR #31 for issue #12."
+    ));
+
+    let state_text = fs::read_to_string(state_file(repo)).expect("read state");
+    assert!(state_text.contains("scheduled_target:"));
+    assert!(state_text.contains("kind: merge_wait"));
+    assert!(state_text.contains("branch_name: bond/issue-12-fix-parser"));
+}
+
+#[test]
+fn scheduled_run_multi_issue_mode_ignores_clean_open_prs_and_falls_through() {
+    let temp = tempdir().expect("tempdir");
+    let repo = temp.path();
+
+    let init = Command::new("git")
+        .arg("init")
+        .current_dir(repo)
+        .output()
+        .expect("git init");
+    assert!(init.status.success(), "git init should succeed");
+
+    let remote = Command::new("git")
+        .args([
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/acme/widgets.git",
+        ])
+        .current_dir(repo)
+        .output()
+        .expect("git remote add origin");
+    assert!(
+        remote.status.success(),
+        "git remote add origin should succeed"
+    );
+
+    fs::create_dir_all(repo.join(".bond")).expect("create .bond directory");
+    fs::write(
+        repo.join(".bond/config.yml"),
+        "version: 1\nexecutable_path: .bond/bin/doublenot-bond\nautomation:\n  schedule_cron: '0 * * * *'\n  provider: anthropic\n  model: claude-sonnet-4-20250514\n  multiple_issues: true\n  thinking_effort: medium\ncommands:\n  test: []\n  lint: []\nissues:\n  eligible_labels:\n    - bond-debug\n    - bond-task\n  priority_labels:\n    - bond-debug\n    - bond-task\n  require_prompt_contract: true\n  issue_history_limit: 10\n",
+    )
+    .expect("write config");
+    write_state_file(repo, true, true);
+
+    let fake_gh = repo.join("fake-gh.sh");
+    fs::write(
+        &fake_gh,
+        "#!/bin/sh\nif [ \"$1\" = \"pr\" ] && [ \"$2\" = \"list\" ]; then\n  printf '[{\"number\":31,\"title\":\"bond: resolve #12\",\"url\":\"https://github.com/acme/widgets/pull/31\",\"headRefName\":\"bond/issue-12-fix-parser\",\"reviewDecision\":\"APPROVED\",\"createdAt\":\"2026-04-05T10:00:00Z\"}]\\n'\n  exit 0\nfi\nif [ \"$1\" = \"issue\" ] && [ \"$2\" = \"list\" ]; then\n  printf '[]\\n'\n  exit 0\nfi\nprintf 'unexpected gh invocation: %s\\n' \"$*\" >&2\nexit 1\n",
+    )
+    .expect("write fake gh script");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut permissions = fs::metadata(&fake_gh)
+            .expect("fake gh metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&fake_gh, permissions).expect("chmod fake gh");
+    }
+
+    let output = bond_cmd()
+        .arg("--repo")
+        .arg(repo)
+        .arg("--bond-runtime")
+        .arg("--provider")
+        .arg("ollama")
+        .arg("--run-scheduled-issue")
+        .env("BOND_GH_BIN", &fake_gh)
+        .stdin(Stdio::null())
+        .output()
+        .expect("run doublenot-bond");
+
+    assert!(output.status.success(), "scheduled run should exit 0");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("No eligible scheduled issue found."));
+
+    let state_text = fs::read_to_string(state_file(repo)).expect("read state");
+    assert!(state_text.contains("scheduled_target: null"));
 }
 
 #[test]
@@ -823,6 +976,7 @@ fn prompt_setup_status_uses_default_automation_when_config_omits_it() {
     assert!(stdout.contains("automation_schedule_cron: 0 * * * *"));
     assert!(stdout.contains("automation_provider: anthropic"));
     assert!(stdout.contains("automation_thinking_effort: medium"));
+    assert!(stdout.contains("automation_multiple_issues: false"));
 }
 
 #[test]
@@ -851,6 +1005,7 @@ fn prompt_status_accepts_legacy_model_reasoning_as_thinking_effort() {
     assert!(output.status.success(), "status should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("automation_thinking_effort: low"));
+    assert!(stdout.contains("automation_multiple_issues: false"));
 }
 
 #[test]

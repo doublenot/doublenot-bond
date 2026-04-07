@@ -1,5 +1,8 @@
 use crate::agent::BondAgentConfig;
-use crate::bond::{BondRuntimeContext, CurrentIssue, IssueWorkflow, RepoCommand, SetupIssue};
+use crate::bond::{
+    issue_branch_name, BondRuntimeContext, CurrentIssue, IssueWorkflow, RepoCommand,
+    ScheduledTarget, ScheduledTargetKind, SetupIssue,
+};
 use crate::cli;
 use anyhow::{anyhow, bail, Context, Result};
 use serde::Deserialize;
@@ -14,6 +17,18 @@ pub enum ReplDirective {
     Continue,
     Exit,
     Prompt(String),
+}
+
+pub enum ScheduledExecution {
+    Prompt(String),
+    Wait(String),
+    None,
+}
+
+enum ScheduledPullRequestDisposition<'a> {
+    Actionable(&'a GitHubPullRequest),
+    MergeWait(&'a GitHubPullRequest),
+    None,
 }
 
 pub fn dispatch_command(
@@ -50,6 +65,10 @@ pub fn dispatch_command(
             println!(
                 "automation_thinking_effort: {}",
                 display_thinking_effort(runtime.config.automation.thinking_effort)
+            );
+            println!(
+                "automation_multiple_issues: {}",
+                runtime.config.automation.multiple_issues
             );
             println!(
                 "workflow_file: {}",
@@ -231,6 +250,10 @@ fn handle_setup(
                 display_thinking_effort(runtime.config.automation.thinking_effort)
             );
             println!(
+                "automation_multiple_issues: {}",
+                runtime.config.automation.multiple_issues
+            );
+            println!(
                 "workflow_file: {}",
                 runtime.paths.bond_workflow_file.display()
             );
@@ -364,13 +387,96 @@ fn handle_setup(
     Ok(ReplDirective::Continue)
 }
 
-pub fn prepare_scheduled_issue_prompt(runtime: &mut BondRuntimeContext) -> Result<Option<String>> {
+pub fn prepare_scheduled_issue_prompt(
+    runtime: &mut BondRuntimeContext,
+) -> Result<ScheduledExecution> {
+    let repo = detect_github_repo(&runtime.paths.repo_root)?;
+    let pull_requests = load_open_bond_pull_requests(runtime, &repo)?;
+
+    match select_scheduled_pull_request(&pull_requests, runtime.config.automation.multiple_issues) {
+        ScheduledPullRequestDisposition::Actionable(pull_request) => {
+            let pull_request = load_pull_request_by_number(runtime, &repo, pull_request.number)?;
+            let issue_number = pull_request.issue_number()?;
+            let issue = load_issue_by_number(runtime, &repo, issue_number)?;
+            let target = ScheduledTarget {
+                kind: ScheduledTargetKind::PrFeedback,
+                issue_number: Some(issue.number),
+                issue_title: Some(issue.title.clone()),
+                issue_url: Some(issue.url.clone()),
+                branch_name: Some(pull_request.head_ref_name.clone()),
+                pr_number: Some(pull_request.number),
+                pr_title: Some(pull_request.title.clone()),
+                pr_url: Some(pull_request.url.clone()),
+            };
+            checkout_scheduled_target_branch(runtime, &target)?;
+            runtime.paths.set_scheduled_target(Some(target))?;
+            runtime.refresh_config()?;
+            runtime.paths.append_journal_entry(
+                "Scheduled PR Feedback Started",
+                &format!(
+                    "Addressing requested changes on PR #{} {}.\n\nPR URL: {}\nBranch: {}\nRelated issue: #{} [{}] {}\n\n{}",
+                    pull_request.number,
+                    pull_request.title,
+                    pull_request.url,
+                    pull_request.head_ref_name,
+                    issue.number,
+                    issue.primary_label(),
+                    issue.title,
+                    issue.url
+                ),
+            )?;
+            return Ok(ScheduledExecution::Prompt(
+                build_pr_feedback_execution_prompt(&pull_request, &issue),
+            ));
+        }
+        ScheduledPullRequestDisposition::MergeWait(pull_request) => {
+            let issue_number = pull_request.issue_number()?;
+            let issue = load_issue_by_number(runtime, &repo, issue_number)?;
+            let target = ScheduledTarget {
+                kind: ScheduledTargetKind::MergeWait,
+                issue_number: Some(issue.number),
+                issue_title: Some(issue.title.clone()),
+                issue_url: Some(issue.url.clone()),
+                branch_name: Some(pull_request.head_ref_name.clone()),
+                pr_number: Some(pull_request.number),
+                pr_title: Some(pull_request.title.clone()),
+                pr_url: Some(pull_request.url.clone()),
+            };
+            runtime.paths.set_scheduled_target(Some(target))?;
+            runtime.refresh_config()?;
+            let message = format!(
+                "Scheduled automation is waiting for merge or approval on PR #{} for issue #{}.",
+                pull_request.number, issue.number
+            );
+            runtime.paths.append_journal_entry(
+                "Scheduled PR Merge Wait",
+                &format!(
+                    "Paused scheduled work behind open PR #{} {}.\n\nPR URL: {}\nBranch: {}\nRelated issue: #{} [{}] {}\n\n{}",
+                    pull_request.number,
+                    pull_request.title,
+                    pull_request.url,
+                    pull_request.head_ref_name,
+                    issue.number,
+                    issue.primary_label(),
+                    issue.title,
+                    issue.url
+                ),
+            )?;
+            return Ok(ScheduledExecution::Wait(message));
+        }
+        ScheduledPullRequestDisposition::None => {}
+    }
+
     if runtime.config.current_issue.is_some() {
         let issue = current_issue_detail(runtime)?;
         if matches!(issue.state.as_deref(), Some("CLOSED" | "closed")) {
             runtime.paths.set_current_issue(None, Some("cleared"))?;
             runtime.refresh_config()?;
         } else if issue_matches_workflow(&issue, &runtime.config.issues) {
+            let target = scheduled_issue_target(&issue);
+            checkout_scheduled_target_branch(runtime, &target)?;
+            runtime.paths.set_scheduled_target(Some(target))?;
+            runtime.refresh_config()?;
             runtime.paths.append_journal_entry(
                 "Scheduled Issue Execution Started",
                 &format!(
@@ -381,17 +487,22 @@ pub fn prepare_scheduled_issue_prompt(runtime: &mut BondRuntimeContext) -> Resul
                     issue.url
                 ),
             )?;
-            return Ok(Some(build_issue_execution_prompt(&issue)));
+            return Ok(ScheduledExecution::Prompt(build_issue_execution_prompt(
+                &issue,
+            )));
         } else {
             runtime.paths.set_current_issue(None, Some("cleared"))?;
             runtime.refresh_config()?;
         }
     }
 
-    let repo = detect_github_repo(&runtime.paths.repo_root)?;
     let issues = load_eligible_issues(runtime, &repo)?;
     if let Some(issue) = select_next_issue(&issues, &runtime.config.issues) {
         persist_current_issue_with_action(runtime, issue, "scheduled")?;
+        let target = scheduled_issue_target(issue);
+        checkout_scheduled_target_branch(runtime, &target)?;
+        runtime.paths.set_scheduled_target(Some(target))?;
+        runtime.refresh_config()?;
         runtime.paths.append_journal_entry(
             "Scheduled Issue Execution Started",
             &format!(
@@ -402,10 +513,14 @@ pub fn prepare_scheduled_issue_prompt(runtime: &mut BondRuntimeContext) -> Resul
                 issue.url
             ),
         )?;
-        return Ok(Some(build_issue_execution_prompt(issue)));
+        return Ok(ScheduledExecution::Prompt(build_issue_execution_prompt(
+            issue,
+        )));
     }
 
-    Ok(None)
+    runtime.paths.set_scheduled_target(None)?;
+    runtime.refresh_config()?;
+    Ok(ScheduledExecution::None)
 }
 
 fn handle_git(
@@ -914,6 +1029,7 @@ fn parse_issue_number(url: &str) -> Option<u64> {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct GitHubIssue {
     number: u64,
     title: String,
@@ -922,6 +1038,40 @@ struct GitHubIssue {
     #[serde(default)]
     state: Option<String>,
     labels: Vec<GitHubLabel>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GitHubPullRequest {
+    number: u64,
+    title: String,
+    url: String,
+    #[serde(default)]
+    body: String,
+    head_ref_name: String,
+    #[serde(default)]
+    created_at: Option<String>,
+    #[serde(default)]
+    review_decision: Option<String>,
+    #[serde(default)]
+    reviews: Vec<GitHubPullRequestReview>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GitHubPullRequestReview {
+    state: String,
+    #[serde(default)]
+    body: String,
+    #[serde(default)]
+    submitted_at: Option<String>,
+    #[serde(default)]
+    author: Option<GitHubActor>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct GitHubActor {
+    login: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -942,6 +1092,26 @@ impl GitHubIssue {
             .first()
             .map(|label| label.name.as_str())
             .unwrap_or("unlabeled")
+    }
+}
+
+impl GitHubPullRequest {
+    fn is_bond_issue_pull_request(&self) -> bool {
+        self.head_ref_name.starts_with("bond/issue-")
+    }
+
+    fn has_requested_changes(&self) -> bool {
+        matches!(self.review_decision.as_deref(), Some("CHANGES_REQUESTED"))
+    }
+
+    fn issue_number(&self) -> Result<u64> {
+        parse_issue_number_from_branch_name(&self.head_ref_name).ok_or_else(|| {
+            anyhow!(
+                "Open bond PR #{} uses an unsupported branch name: {}",
+                self.number,
+                self.head_ref_name
+            )
+        })
     }
 }
 
@@ -1134,6 +1304,37 @@ fn build_issue_execution_prompt(issue: &GitHubIssue) -> String {
         issue.title,
         issue.url,
         issue.body.trim()
+    )
+}
+
+fn build_pr_feedback_execution_prompt(
+    pull_request: &GitHubPullRequest,
+    issue: &GitHubIssue,
+) -> String {
+    let requested_changes = requested_changes_summary(&pull_request.reviews);
+    let pull_request_body = if pull_request.body.trim().is_empty() {
+        "(no PR body provided)"
+    } else {
+        pull_request.body.trim()
+    };
+
+    format!(
+        "Address requested changes on existing GitHub PR #{} {} for issue #{} [{}] {}.\n\nPR URL: {}\nIssue URL: {}\nTarget branch: {}\nReview decision: {}\n\nPR body:\n{}\n\nIssue body:\n{}\n\nRequested changes:\n{}\nInstructions:\n- Work only on the existing PR branch for this issue.\n- Address explicit requested changes before starting any new issue work.\n- Keep the update scoped to the current PR and issue.\n- Run relevant verification before concluding.\n- Summarize what changed, what was verified, and any blockers.",
+        pull_request.number,
+        pull_request.title,
+        issue.number,
+        issue.primary_label(),
+        issue.title,
+        pull_request.url,
+        issue.url,
+        pull_request.head_ref_name,
+        pull_request
+            .review_decision
+            .as_deref()
+            .unwrap_or("unknown"),
+        pull_request_body,
+        issue.body.trim(),
+        requested_changes
     )
 }
 
@@ -1379,6 +1580,65 @@ fn load_eligible_issues(runtime: &BondRuntimeContext, repo: &str) -> Result<Vec<
     Ok(eligible)
 }
 
+fn load_open_bond_pull_requests(
+    runtime: &BondRuntimeContext,
+    repo: &str,
+) -> Result<Vec<GitHubPullRequest>> {
+    let gh_bin = env::var("BOND_GH_BIN").unwrap_or_else(|_| "gh".to_string());
+    let raw = run_command_capture(
+        &gh_bin,
+        &[
+            "pr",
+            "list",
+            "--repo",
+            repo,
+            "--state",
+            "open",
+            "--limit",
+            "100",
+            "--json",
+            "number,title,url,headRefName,reviewDecision,createdAt",
+        ],
+        &runtime.paths.repo_root,
+    )?;
+
+    let mut pull_requests: Vec<GitHubPullRequest> =
+        serde_json::from_str(&raw).context("failed to parse gh pr list JSON")?;
+    pull_requests.retain(GitHubPullRequest::is_bond_issue_pull_request);
+    pull_requests.sort_by(|left, right| {
+        left.created_at
+            .as_deref()
+            .unwrap_or("")
+            .cmp(right.created_at.as_deref().unwrap_or(""))
+            .then_with(|| left.number.cmp(&right.number))
+            .then_with(|| left.head_ref_name.cmp(&right.head_ref_name))
+    });
+    Ok(pull_requests)
+}
+
+fn load_pull_request_by_number(
+    runtime: &BondRuntimeContext,
+    repo: &str,
+    pull_request_number: u64,
+) -> Result<GitHubPullRequest> {
+    let gh_bin = env::var("BOND_GH_BIN").unwrap_or_else(|_| "gh".to_string());
+    let raw = run_command_capture(
+        &gh_bin,
+        &[
+            "pr",
+            "view",
+            &pull_request_number.to_string(),
+            "--repo",
+            repo,
+            "--json",
+            "number,title,url,body,headRefName,reviewDecision,reviews",
+        ],
+        &runtime.paths.repo_root,
+    )?;
+
+    serde_json::from_str(&raw).context("failed to parse gh pr view JSON")
+}
+
 fn issue_matches_workflow(issue: &GitHubIssue, workflow: &IssueWorkflow) -> bool {
     let label_names = issue.label_names();
     if label_names.iter().any(|label| {
@@ -1593,6 +1853,154 @@ fn select_next_issue<'a>(
     ranked.into_iter().next()
 }
 
+fn scheduled_issue_target(issue: &GitHubIssue) -> ScheduledTarget {
+    ScheduledTarget {
+        kind: ScheduledTargetKind::Issue,
+        issue_number: Some(issue.number),
+        issue_title: Some(issue.title.clone()),
+        issue_url: Some(issue.url.clone()),
+        branch_name: Some(issue_branch_name(issue.number, &issue.title)),
+        pr_number: None,
+        pr_title: None,
+        pr_url: None,
+    }
+}
+
+fn requested_changes_summary(reviews: &[GitHubPullRequestReview]) -> String {
+    let requested = reviews
+        .iter()
+        .filter(|review| review.state == "CHANGES_REQUESTED")
+        .collect::<Vec<_>>();
+
+    if requested.is_empty() {
+        return "- GitHub reported requested changes, but no review body was returned. Inspect the PR review history directly if needed.".to_string();
+    }
+
+    requested
+        .iter()
+        .enumerate()
+        .map(|(index, review)| {
+            let author = review
+                .author
+                .as_ref()
+                .map(|author| author.login.as_str())
+                .unwrap_or("unknown reviewer");
+            let submitted_at = review.submitted_at.as_deref().unwrap_or("unknown time");
+            let body = if review.body.trim().is_empty() {
+                "(no review body provided)"
+            } else {
+                review.body.trim()
+            };
+            format!("{}. {} at {}\n{}", index + 1, author, submitted_at, body)
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn parse_issue_number_from_branch_name(branch_name: &str) -> Option<u64> {
+    let remainder = branch_name.strip_prefix("bond/issue-")?;
+    let digits = remainder
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+
+    if digits.is_empty() {
+        return None;
+    }
+
+    digits.parse().ok()
+}
+
+fn select_scheduled_pull_request(
+    pull_requests: &[GitHubPullRequest],
+    multiple_issues: bool,
+) -> ScheduledPullRequestDisposition<'_> {
+    let ordering = |left: &&GitHubPullRequest, right: &&GitHubPullRequest| {
+        left.created_at
+            .as_deref()
+            .unwrap_or("")
+            .cmp(right.created_at.as_deref().unwrap_or(""))
+            .then_with(|| left.number.cmp(&right.number))
+            .then_with(|| left.head_ref_name.cmp(&right.head_ref_name))
+    };
+
+    if let Some(pull_request) = pull_requests
+        .iter()
+        .filter(|pull_request| pull_request.has_requested_changes())
+        .min_by(ordering)
+    {
+        return ScheduledPullRequestDisposition::Actionable(pull_request);
+    }
+
+    if multiple_issues {
+        ScheduledPullRequestDisposition::None
+    } else if let Some(pull_request) = pull_requests.iter().min_by(ordering) {
+        ScheduledPullRequestDisposition::MergeWait(pull_request)
+    } else {
+        ScheduledPullRequestDisposition::None
+    }
+}
+
+fn checkout_scheduled_target_branch(
+    runtime: &BondRuntimeContext,
+    target: &ScheduledTarget,
+) -> Result<()> {
+    let Some(branch_name) = target.branch_name.as_deref() else {
+        return Ok(());
+    };
+
+    let _ = Command::new("git")
+        .args(["fetch", "origin", branch_name])
+        .current_dir(&runtime.paths.repo_root)
+        .output();
+
+    let remote_ref = format!("refs/remotes/origin/{branch_name}");
+    if git_ref_exists(&runtime.paths.repo_root, &remote_ref)? {
+        run_command_capture(
+            "git",
+            &[
+                "checkout",
+                "-B",
+                branch_name,
+                &format!("origin/{branch_name}"),
+            ],
+            &runtime.paths.repo_root,
+        )?;
+        return Ok(());
+    }
+
+    let current_branch = run_command_capture(
+        "git",
+        &["branch", "--show-current"],
+        &runtime.paths.repo_root,
+    )?;
+    if current_branch.trim() == branch_name {
+        return Ok(());
+    }
+
+    let local_ref = format!("refs/heads/{branch_name}");
+    if git_ref_exists(&runtime.paths.repo_root, &local_ref)? {
+        run_command_capture("git", &["checkout", branch_name], &runtime.paths.repo_root)?;
+    } else {
+        run_command_capture(
+            "git",
+            &["checkout", "-b", branch_name],
+            &runtime.paths.repo_root,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn git_ref_exists(repo_root: &Path, reference: &str) -> Result<bool> {
+    let status = Command::new("git")
+        .args(["show-ref", "--verify", "--quiet", reference])
+        .current_dir(repo_root)
+        .status()
+        .context("failed to run git show-ref")?;
+    Ok(status.success())
+}
+
 fn issue_priority(issue: &GitHubIssue, workflow: &IssueWorkflow) -> usize {
     let labels = issue.label_names();
     workflow
@@ -1624,5 +2032,83 @@ fn ensure_command_allowed(permissions: &crate::cli::PermissionConfig, command: &
     match permissions.check(command) {
         Some(false) => bail!("Command denied by permission rule: {command}"),
         _ => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        parse_issue_number_from_branch_name, select_scheduled_pull_request, GitHubPullRequest,
+        GitHubPullRequestReview, ScheduledPullRequestDisposition,
+    };
+
+    fn pull_request(
+        number: u64,
+        created_at: &str,
+        review_decision: Option<&str>,
+    ) -> GitHubPullRequest {
+        GitHubPullRequest {
+            number,
+            title: format!("PR {number}"),
+            url: format!("https://github.com/acme/widgets/pull/{number}"),
+            body: String::new(),
+            head_ref_name: format!("bond/issue-{number}-example"),
+            created_at: Some(created_at.to_string()),
+            review_decision: review_decision.map(str::to_string),
+            reviews: vec![GitHubPullRequestReview {
+                state: review_decision.unwrap_or("REVIEW_REQUIRED").to_string(),
+                body: String::new(),
+                submitted_at: None,
+                author: None,
+            }],
+        }
+    }
+
+    #[test]
+    fn parse_issue_number_from_branch_name_extracts_issue_number() {
+        assert_eq!(
+            parse_issue_number_from_branch_name("bond/issue-123-fix-parser"),
+            Some(123)
+        );
+        assert_eq!(parse_issue_number_from_branch_name("bond/issue-9"), Some(9));
+        assert_eq!(parse_issue_number_from_branch_name("feature/example"), None);
+    }
+
+    #[test]
+    fn scheduled_pull_request_selection_prefers_oldest_requested_changes() {
+        let pull_requests = vec![
+            pull_request(42, "2026-04-05T12:00:00Z", Some("CHANGES_REQUESTED")),
+            pull_request(12, "2026-04-05T10:00:00Z", Some("CHANGES_REQUESTED")),
+            pull_request(18, "2026-04-05T11:00:00Z", Some("APPROVED")),
+        ];
+
+        match select_scheduled_pull_request(&pull_requests, true) {
+            ScheduledPullRequestDisposition::Actionable(pull_request) => {
+                assert_eq!(pull_request.number, 12);
+            }
+            _ => panic!("expected actionable PR selection"),
+        }
+    }
+
+    #[test]
+    fn scheduled_pull_request_selection_returns_merge_wait_in_single_issue_mode() {
+        let pull_requests = vec![pull_request(12, "2026-04-05T10:00:00Z", Some("APPROVED"))];
+
+        match select_scheduled_pull_request(&pull_requests, false) {
+            ScheduledPullRequestDisposition::MergeWait(pull_request) => {
+                assert_eq!(pull_request.number, 12);
+            }
+            _ => panic!("expected merge-wait selection"),
+        }
+    }
+
+    #[test]
+    fn scheduled_pull_request_selection_skips_merge_wait_in_multi_issue_mode() {
+        let pull_requests = vec![pull_request(12, "2026-04-05T10:00:00Z", Some("APPROVED"))];
+
+        assert!(matches!(
+            select_scheduled_pull_request(&pull_requests, true),
+            ScheduledPullRequestDisposition::None
+        ));
     }
 }
