@@ -1,6 +1,6 @@
 [package]
 name = "doublenot-bond"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 description = "A self-hosting coding agent that stores runtime identity inside .bond/."
 license = "MIT"
