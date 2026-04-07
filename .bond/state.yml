@@ -1,7 +1,33 @@
 configured: true
 autonomous_enabled: true
 setup_issue: null
-last_issue: null
-current_issue: null
-issue_history: []
-scheduled_target: null
+last_issue:
+  number: 1
+  title: 'Task: Add more parameters to the "/setup workflow" slash command'
+  url: https://github.com/doublenot/doublenot-bond/issues/1
+  label: bond-task
+  last_action: scheduled
+  last_action_at: 2026-04-07T19:39:25.386084322Z
+current_issue:
+  number: 1
+  title: 'Task: Add more parameters to the "/setup workflow" slash command'
+  url: https://github.com/doublenot/doublenot-bond/issues/1
+  label: bond-task
+  last_action: scheduled
+  last_action_at: 2026-04-07T19:39:25.386084322Z
+issue_history:
+- number: 1
+  title: 'Task: Add more parameters to the "/setup workflow" slash command'
+  url: https://github.com/doublenot/doublenot-bond/issues/1
+  label: bond-task
+  last_action: scheduled
+  last_action_at: 2026-04-07T19:39:25.386084322Z
+scheduled_target:
+  kind: issue
+  issue_number: 1
+  issue_title: 'Task: Add more parameters to the "/setup workflow" slash command'
+  issue_url: https://github.com/doublenot/doublenot-bond/issues/1
+  branch_name: bond/issue-1-task-add-more-parameters-to-the-setup-workflow-s
+  pr_number: null
+  pr_title: null
+  pr_url: null
