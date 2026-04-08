@@ -100,7 +100,14 @@ The Linux release job installs `pkg-config` and `libssl-dev` explicitly because 
 
 Each release also publishes `doublenot-bond-checksums.txt`. The install scripts download that file and verify the archive checksum before extracting the binary, and every tagged release now includes a versioned source tarball.
 
-Release archives are published as GitHub Release assets, which makes them fetchable from other repositories and installers as long as they have access to this repository.
+The tagged release workflow now uses one aggregate publish job after artifact assembly. That job creates the GitHub Release once, attaches the platform archives plus source tarball and checksum file, validates `cargo publish --dry-run --locked`, and then publishes the crate to crates.io.
+
+This project publishes to two distribution surfaces:
+
+- GitHub Releases for installable binaries and release assets
+- crates.io for the published Rust crate
+
+It does not publish the Rust crate through GitHub Packages.
 
 Before pushing a release tag, update `Cargo.toml` with:
 
@@ -110,9 +117,11 @@ make release-prep VERSION=0.1.1
 
 That updates `package.version` and prints the next commit and tag commands. The release workflow rejects a pushed tag if `vX.Y.Z` does not match `Cargo.toml`.
 
-For non-tag validation, run `./scripts/release-dry-run.sh`. It builds the Linux release artifact, creates a source tarball, and writes a checksum manifest under `target/release-dry-run/`.
+For non-tag validation, run `./scripts/release-dry-run.sh`. It builds the Linux release artifact, runs `cargo publish --dry-run --locked`, creates a source tarball, and writes a checksum manifest under `target/release-dry-run/`.
 
 For the full local validation path, run `make ci-local`.
+
+Tagged crates.io publication requires the repository secret `CARGO_REGISTRY_TOKEN`.
 
 ## CI
 
@@ -215,7 +224,7 @@ automation:
   thinking_effort: medium
 ```
 
-The generated `.github/workflows/bond.yml` first builds `doublenot-bond` into `.bond/bin/`, lets `--run-scheduled-issue` select the scheduled target and check out the right branch at runtime, runs the configured `commands.lint` and `commands.test` checks from `.bond/config.yml` when the scheduled run produced changes, and only then commits changes to a feature branch and opens or reuses a PR linked to the issue:
+The generated `.github/workflows/bond.yml` first builds `doublenot-bond` into `.bond/bin/`, lets `--run-scheduled-issue` select the scheduled target and check out the right branch at runtime, runs the configured `commands.lint` and `commands.test` checks from `.bond/config.yml` when the scheduled run produced changes, mints a GitHub App installation token for the write path, and only then commits changes to a feature branch and opens or reuses a PR linked to the issue:
 
 ```bash
 cargo build --locked --bin doublenot-bond
@@ -228,7 +237,7 @@ cargo test
 git checkout -b "bond/issue-123-short-slug"
 git add -A
 git commit -m "bond: work on #123"
-git push origin "bond/issue-123-short-slug"
+git push "https://x-access-token:${BOND_WRITE_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "bond/issue-123-short-slug"
 gh pr create --base "${GITHUB_REF_NAME}" --head "bond/issue-123-short-slug" --title "bond: resolve #123" --body "Closes #123"
 ```
 
@@ -242,7 +251,7 @@ Scheduled runs only execute issue work when `.bond/state.yml` has `autonomous_en
 
 When `automation.multiple_issues: true`, scheduled runs still prioritize the oldest bond PR with requested changes, but they no longer stop behind clean open PRs that are only waiting for approval or merge.
 
-The generated workflow configures commits as `doublenot-bond[bot] <doublenot-bond[bot]@users.noreply.github.com>`.
+The generated workflow configures commits as `doublenot-bond[bot] <doublenot-bond[bot]@users.noreply.github.com>` and uses a GitHub App installation token for branch pushes and PR creation so the remote write actor is not `github-actions[bot]`.
 
 When `--provider` and `--model` are omitted, `doublenot-bond` now falls back to `automation.provider` and `automation.model` from `.bond/config.yml`.
 
@@ -257,6 +266,11 @@ Required repository secrets depend on the configured provider:
 - `groq` → `GROQ_API_KEY`
 - `deepseek` → `DEEPSEEK_API_KEY`
 - `ollama` → no API-key secret is injected, but a hosted GitHub Actions runner is generally not a practical Ollama target
+
+Scheduled write operations also require these repository secrets:
+
+- `BOND_GITHUB_APP_ID` → the Doublenot GitHub App ID used for branch pushes and PR creation
+- `BOND_GITHUB_APP_PRIVATE_KEY` → the PEM private key for that GitHub App
 
 The workflow also uses `GITHUB_TOKEN` for issue reads, comments, closes, and any git operations performed during the run.
 

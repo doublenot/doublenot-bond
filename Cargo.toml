@@ -5,6 +5,7 @@ edition = "2021"
 description = "A self-hosting coding agent that stores runtime identity inside .bond/."
 license = "MIT"
 readme = "README.md"
+repository = "https://github.com/doublenot/doublenot-bond"
 
 [[bin]]
 name = "doublenot-bond"

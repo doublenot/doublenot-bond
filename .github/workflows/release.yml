@@ -89,12 +89,6 @@ jobs:
           Copy-Item install.ps1 "$artifact/"
           Compress-Archive -Path "$artifact/*" -DestinationPath "${artifact}.zip"
 
-      - name: Upload release assets
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            doublenot-bond-${{ matrix.target }}.${{ matrix.archive }}
-
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
@@ -130,11 +124,6 @@ jobs:
           prefix="doublenot-bond-${version}/"
           git archive --format=tar.gz --prefix="$prefix" -o "doublenot-bond-${version}.tar.gz" HEAD
 
-      - name: Upload source release asset
-        uses: softprops/action-gh-release@v2
-        with:
-          files: doublenot-bond-${{ github.ref_name }}.tar.gz
-
       - name: Upload source workflow artifact
         uses: actions/upload-artifact@v4
         with:
@@ -161,7 +150,96 @@ jobs:
           cd artifacts
           find . -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) -print0 | sort -z | xargs -0 sha256sum | sed 's# \./# #' > ../doublenot-bond-checksums.txt
 
-      - name: Upload checksum asset
+      - name: Upload checksum workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-checksums
+          path: doublenot-bond-checksums.txt
+
+  publish:
+    needs:
+      - build
+      - source
+      - checksums
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Verify tag matches Cargo.toml version
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest_version="$(sed -n '/^\[package\]$/,/^\[/ s/^version = "\([^"]*\)"$/\1/p' Cargo.toml | head -n 1)"
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [ -z "$manifest_version" ]; then
+            echo "failed to read package.version from Cargo.toml" >&2
+            exit 1
+          fi
+          if [ "$manifest_version" != "$tag_version" ]; then
+            echo "tag version v$tag_version does not match Cargo.toml version $manifest_version" >&2
+            exit 1
+          fi
+
+      - name: Install Linux build dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev zip
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Validate crates.io publication readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo publish --dry-run --locked
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Verify release artifact set
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_files=(
+            "doublenot-bond-x86_64-unknown-linux-gnu.tar.gz"
+            "doublenot-bond-x86_64-apple-darwin.tar.gz"
+            "doublenot-bond-aarch64-apple-darwin.tar.gz"
+            "doublenot-bond-x86_64-pc-windows-msvc.zip"
+            "doublenot-bond-${GITHUB_REF_NAME}.tar.gz"
+            "doublenot-bond-checksums.txt"
+          )
+
+          for file in "${expected_files[@]}"; do
+            if [[ ! -f "release-artifacts/$file" ]]; then
+              echo "missing expected release artifact: $file" >&2
+              exit 1
+            fi
+          done
+
+      - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          files: doublenot-bond-checksums.txt
+          files: |
+            release-artifacts/*
+
+      - name: Verify crates.io credentials
+        shell: bash
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${CARGO_REGISTRY_TOKEN:-}" ]]; then
+            echo "Missing required secret CARGO_REGISTRY_TOKEN for crates.io publication." >&2
+            exit 1
+          fi
+
+      - name: Publish crate to crates.io
+        shell: bash
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          cargo publish --locked
