@@ -6,7 +6,7 @@ name: bond
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 12 * * *"
+    - cron: '0 12 * * *'
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -51,58 +51,6 @@ jobs:
           git config user.name "doublenot-bond[bot]"
           git config user.email "doublenot-bond[bot]@users.noreply.github.com"
 
-      - name: Resume existing issue branch
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          read_issue_metadata() {
-            if [[ ! -f .bond/state.yml ]]; then
-              return 0
-            fi
-
-            local issue_key
-            local issue_block
-            local issue_number
-            local issue_title
-            local issue_branch_slug
-
-            for issue_key in current_issue last_issue; do
-              issue_block="$(sed -n "/^${issue_key}:$/,/^[^ ]/p" .bond/state.yml)"
-              issue_number="$(printf '%s\n' "$issue_block" | sed -n 's/^  number: //p' | head -n 1)"
-              issue_title="$(printf '%s\n' "$issue_block" | sed -n 's/^  title: //p' | head -n 1)"
-
-              if [[ -z "$issue_number" || -z "$issue_title" ]]; then
-                continue
-              fi
-
-              issue_title="${issue_title#\"}"
-              issue_title="${issue_title%\"}"
-              issue_branch_slug="$(printf '%s' "$issue_title" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]\+/-/g; s/^-//; s/-$//' | cut -c1-48)"
-              if [[ -z "$issue_branch_slug" ]]; then
-                issue_branch_slug="issue"
-              fi
-
-              ISSUE_BRANCH="bond/issue-$issue_number-$issue_branch_slug"
-              return 0
-            done
-          }
-
-          read_issue_metadata || true
-
-          if [[ -z "${ISSUE_BRANCH:-}" ]]; then
-            echo "No persisted issue branch to resume."
-            exit 0
-          fi
-
-          git fetch origin "$ISSUE_BRANCH" || true
-
-          if git show-ref --verify --quiet "refs/remotes/origin/$ISSUE_BRANCH"; then
-            git checkout -B "$ISSUE_BRANCH" "origin/$ISSUE_BRANCH"
-          elif [[ "$(git branch --show-current)" != "$ISSUE_BRANCH" ]]; then
-            git checkout -b "$ISSUE_BRANCH"
-          fi
-
       - name: Run scheduled bond issue workflow
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -113,6 +61,27 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          read_scheduled_target() {
+            if [[ ! -f .bond/state.yml ]]; then
+              return 0
+            fi
+
+            local target_block
+            target_block="$(sed -n '/^scheduled_target:$/,/^[^ ]/p' .bond/state.yml)"
+            if [[ -z "$target_block" ]]; then
+              return 0
+            fi
+
+            SCHEDULED_TARGET_KIND="$(printf '%s\n' "$target_block" | sed -n 's/^  kind: //p' | head -n 1)"
+          }
+
+          read_scheduled_target || true
+
+          if [[ "${SCHEDULED_TARGET_KIND:-}" == "merge_wait" ]]; then
+            echo "Scheduled run is waiting for merge or approval. Skipping verification."
+            exit 0
+          fi
 
           if [[ -z "$(git status --short)" ]]; then
             echo "No changes to verify."
@@ -128,56 +97,113 @@ jobs:
           printf '> %s\n' 'cargo test'
           'cargo' 'test'
 
-      - name: Commit, push, and open PR
+      - name: Inspect scheduled publish state
+        id: scheduled_publish_state
         shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+
+          read_scheduled_target() {
+            if [[ ! -f .bond/state.yml ]]; then
+              return 0
+            fi
+
+            local target_block
+            target_block="$(sed -n '/^scheduled_target:$/,/^[^ ]/p' .bond/state.yml)"
+            if [[ -z "$target_block" ]]; then
+              return 0
+            fi
+
+            SCHEDULED_TARGET_KIND="$(printf '%s\n' "$target_block" | sed -n 's/^  kind: //p' | head -n 1)"
+          }
+
+          read_scheduled_target || true
+
+          if [[ "${SCHEDULED_TARGET_KIND:-}" == "merge_wait" ]]; then
+            echo "needs_publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ -z "$(git status --short)" ]]; then
+            echo "needs_publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "needs_publish=true" >> "$GITHUB_OUTPUT"
+
+      - name: Validate bond write credentials
+        if: steps.scheduled_publish_state.outputs.needs_publish == 'true'
+        shell: bash
+        env:
+          BOND_GITHUB_APP_ID: ${{ secrets.BOND_GITHUB_APP_ID }}
+          BOND_GITHUB_APP_PRIVATE_KEY: ${{ secrets.BOND_GITHUB_APP_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${BOND_GITHUB_APP_ID:-}" ]]; then
+            echo "Missing required secret BOND_GITHUB_APP_ID for scheduled bond writes." >&2
+            exit 1
+          fi
+
+          if [[ -z "${BOND_GITHUB_APP_PRIVATE_KEY:-}" ]]; then
+            echo "Missing required secret BOND_GITHUB_APP_PRIVATE_KEY for scheduled bond writes." >&2
+            exit 1
+          fi
+
+      - name: Mint bond write token
+        if: steps.scheduled_publish_state.outputs.needs_publish == 'true'
+        id: bond_write_token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.BOND_GITHUB_APP_ID }}
+          private-key: ${{ secrets.BOND_GITHUB_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Commit, push, and open PR
+        if: steps.scheduled_publish_state.outputs.needs_publish == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.bond_write_token.outputs.token }}
+          BOND_WRITE_TOKEN: ${{ steps.bond_write_token.outputs.token }}
+        run: |
+          set -euo pipefail
+
+          read_scheduled_target() {
+            if [[ ! -f .bond/state.yml ]]; then
+              return 0
+            fi
+
+            local target_block
+            target_block="$(sed -n '/^scheduled_target:$/,/^[^ ]/p' .bond/state.yml)"
+            if [[ -z "$target_block" ]]; then
+              return 0
+            fi
+
+            SCHEDULED_TARGET_KIND="$(printf '%s\n' "$target_block" | sed -n 's/^  kind: //p' | head -n 1)"
+            ISSUE_NUMBER="$(printf '%s\n' "$target_block" | sed -n 's/^  issue_number: //p' | head -n 1)"
+            ISSUE_TITLE="$(printf '%s\n' "$target_block" | sed -n 's/^  issue_title: //p' | head -n 1)"
+            ISSUE_BRANCH="$(printf '%s\n' "$target_block" | sed -n 's/^  branch_name: //p' | head -n 1)"
+
+            ISSUE_TITLE="${ISSUE_TITLE#\"}"
+            ISSUE_TITLE="${ISSUE_TITLE%\"}"
+            ISSUE_BRANCH="${ISSUE_BRANCH#\"}"
+            ISSUE_BRANCH="${ISSUE_BRANCH%\"}"
+          }
+
+          read_scheduled_target || true
+
+          if [[ "${SCHEDULED_TARGET_KIND:-}" == "merge_wait" ]]; then
+            echo "Scheduled run is waiting for merge or approval. Skipping commit."
+            exit 0
+          fi
 
           if [[ -z "$(git status --short)" ]]; then
             echo "No changes to commit."
             exit 0
           fi
 
-          read_issue_metadata() {
-            if [[ ! -f .bond/state.yml ]]; then
-              return 0
-            fi
-
-            local issue_key
-            local issue_block
-            local issue_number
-            local issue_title
-            local issue_branch_slug
-
-            for issue_key in current_issue last_issue; do
-              issue_block="$(sed -n "/^${issue_key}:$/,/^[^ ]/p" .bond/state.yml)"
-              issue_number="$(printf '%s\n' "$issue_block" | sed -n 's/^  number: //p' | head -n 1)"
-              issue_title="$(printf '%s\n' "$issue_block" | sed -n 's/^  title: //p' | head -n 1)"
-
-              if [[ -z "$issue_number" || -z "$issue_title" ]]; then
-                continue
-              fi
-
-              issue_title="${issue_title#\"}"
-              issue_title="${issue_title%\"}"
-              issue_branch_slug="$(printf '%s' "$issue_title" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]\+/-/g; s/^-//; s/-$//' | cut -c1-48)"
-              if [[ -z "$issue_branch_slug" ]]; then
-                issue_branch_slug="issue"
-              fi
-
-              ISSUE_NUMBER="$issue_number"
-              ISSUE_TITLE="$issue_title"
-              ISSUE_BRANCH="bond/issue-$issue_number-$issue_branch_slug"
-              return 0
-            done
-          }
-
-          read_issue_metadata || true
-
           if [[ -z "${ISSUE_NUMBER:-}" || -z "${ISSUE_BRANCH:-}" ]]; then
-            echo "Changed files but no persisted issue metadata was found."
+            echo "Changed files but no persisted scheduled target metadata was found."
             exit 1
           fi
 
@@ -193,7 +219,7 @@ jobs:
           fi
 
           git commit -m "bond: work on #$ISSUE_NUMBER"
-          git push origin "$ISSUE_BRANCH"
+          git push "https://x-access-token:${BOND_WRITE_TOKEN}@github.com/${{ github.repository }}.git" "$ISSUE_BRANCH"
 
           existing_pr="$(gh pr list --head "$ISSUE_BRANCH" --base "${{ github.ref_name }}" --json number --jq '.[0].number')"
           if [[ -n "$existing_pr" && "$existing_pr" != "null" ]]; then
@@ -209,3 +235,4 @@ jobs:
           pr_body=$(printf 'Closes #%s\n\nAutomated changes from doublenot-bond.\n' "$ISSUE_NUMBER")
 
           gh pr create --base "${{ github.ref_name }}" --head "$ISSUE_BRANCH" --title "$pr_title" --body "$pr_body"
+

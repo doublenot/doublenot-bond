@@ -14,6 +14,7 @@ mkdir -p "$dist_dir"
 pushd "$repo_root" >/dev/null
 
 cargo build --release --locked --target "$target"
+cargo publish --dry-run --locked --allow-dirty
 
 artifact_dir="$dist_dir/$artifact_root"
 mkdir -p "$artifact_dir"

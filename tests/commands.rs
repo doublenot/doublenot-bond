@@ -400,6 +400,11 @@ fn prompt_setup_workflow_creates_bond_workflow_file() {
     assert!(workflow_text.contains("Verify repo changes before commit"));
     assert!(workflow_text.contains("read_scheduled_target()"));
     assert!(workflow_text.contains("SCHEDULED_TARGET_KIND"));
+    assert!(workflow_text.contains("Inspect scheduled publish state"));
+    assert!(workflow_text.contains("Validate bond write credentials"));
+    assert!(workflow_text.contains("actions/create-github-app-token@v2"));
+    assert!(workflow_text.contains("BOND_GITHUB_APP_ID"));
+    assert!(workflow_text.contains("BOND_GITHUB_APP_PRIVATE_KEY"));
     assert!(workflow_text
         .contains("Scheduled run is waiting for merge or approval. Skipping verification."));
     assert!(
@@ -420,7 +425,9 @@ fn prompt_setup_workflow_creates_bond_workflow_file() {
     assert!(workflow_text.contains("issue_number: //p"));
     assert!(workflow_text.contains("branch_name: //p"));
     assert!(workflow_text.contains("git commit -m \"bond: work on #$ISSUE_NUMBER\""));
-    assert!(workflow_text.contains("git push origin \"$ISSUE_BRANCH\""));
+    assert!(workflow_text.contains(
+        "git push \"https://x-access-token:${BOND_WRITE_TOKEN}@github.com/${{ github.repository }}.git\" \"$ISSUE_BRANCH\""
+    ));
     assert!(workflow_text
         .contains("gh pr list --head \"$ISSUE_BRANCH\" --base \"${{ github.ref_name }}\""));
     assert!(workflow_text
@@ -510,10 +517,18 @@ fn prompt_setup_workflow_refresh_overwrites_existing_file() {
     assert!(workflow_text.contains("GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}"));
     assert!(workflow_text.contains("Verify repo changes before commit"));
     assert!(workflow_text.contains("read_scheduled_target()"));
+    assert!(workflow_text.contains("Inspect scheduled publish state"));
+    assert!(workflow_text.contains("Validate bond write credentials"));
+    assert!(workflow_text.contains("actions/create-github-app-token@v2"));
+    assert!(workflow_text.contains("BOND_GITHUB_APP_ID"));
+    assert!(workflow_text.contains("BOND_GITHUB_APP_PRIVATE_KEY"));
+    assert!(workflow_text.contains("BOND_WRITE_TOKEN"));
     assert!(workflow_text.contains("Verification required but no commands configured."));
     assert!(workflow_text.contains("exit 1"));
     assert!(workflow_text.contains("git commit -m \"bond: work on #$ISSUE_NUMBER\""));
-    assert!(workflow_text.contains("git push origin \"$ISSUE_BRANCH\""));
+    assert!(workflow_text.contains(
+        "git push \"https://x-access-token:${BOND_WRITE_TOKEN}@github.com/${{ github.repository }}.git\" \"$ISSUE_BRANCH\""
+    ));
     assert!(workflow_text
         .contains("gh pr create --base \"${{ github.ref_name }}\" --head \"$ISSUE_BRANCH\""));
     assert!(!workflow_text.contains("BOND_PROVIDER:"));

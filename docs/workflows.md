@@ -38,15 +38,18 @@ flowchart TD
         E1 --> E12[macOS x86_64 archive]
         E1 --> E13[macOS ARM64 archive]
         E1 --> E14[Windows x86_64 archive]
-        E11 --> E3[Upload release assets]
+        E2 --> E21[versioned source tarball]
+        E11 --> E3[upload build artifacts]
         E12 --> E3
         E13 --> E3
         E14 --> E3
-        E2 --> E21[versioned source tarball]
         E21 --> E3
         E3 --> E4[checksums job]
-        E4 --> E5[doublenot-bond-checksums.txt]
-        E5 --> E6[Published GitHub release]
+        E4 --> E5[doublenot-bond-checksums.txt artifact]
+        E5 --> E6[aggregate publish job]
+        E6 --> E7[create GitHub Release once]
+        E6 --> E8[cargo publish dry-run]
+        E8 --> E9[publish crate to crates.io]
     end
 
     B -->|Local| C
@@ -57,9 +60,10 @@ flowchart TD
 ## Notes
 
 - `make ci-local` is the closest local equivalent to the Linux CI path.
-- The release dry-run only exercises the Linux packaging path locally.
-- The tagged release workflow is the only path that publishes cross-platform archives and release assets.
+- The release dry-run now covers both Linux packaging and `cargo publish --dry-run --locked`.
+- The tagged release workflow is the only path that publishes cross-platform archives, GitHub Release assets, and the crates.io crate.
 - `make release-prep VERSION=X.Y.Z` is the local step that updates `Cargo.toml` before creating the matching `vX.Y.Z` tag.
+- The Rust crate is published to crates.io, not GitHub Packages.
 
 ## Scheduled Bond Workflow
 
@@ -91,7 +95,9 @@ flowchart TD
     M --> T
     T --> U[update .bond state, issue state, and scheduled target]
     U --> V{working tree changed?}
-    V -->|Yes| W[verify, commit, and push scheduled target branch]
+    V -->|Yes| V1[validate GitHub App write secrets]
+    V1 --> V2[mint GitHub App installation token]
+    V2 --> W[verify, commit, and push scheduled target branch]
     W --> X[open or reuse PR with Closes #issue]
     V -->|No| Y[finish without commit]
 ```
@@ -102,10 +108,11 @@ flowchart TD
 - New `.bond/config.yml` bootstrap output leaves `commands.test` and `commands.lint` as empty arrays with guidance comments, so operators must declare repo-specific verification commands before relying on `/test`, `/lint`, or scheduled verification.
 - `automation.multiple_issues` defaults to `false`, which means the oldest open bond PR blocks new issue work until it is merged unless that PR currently has requested changes to address.
 - During the scheduled run, the runtime selects and checks out the scheduled target branch itself. That target can be PR feedback work, merge-wait, or normal issue work.
-- After the scheduled run, the workflow reads the persisted scheduled target metadata from `.bond/state.yml`, runs configured `commands.lint` and `commands.test` checks when there are changes to publish, then stages tracked changes, commits them as `doublenot-bond[bot]`, pushes the selected branch, and opens or reuses a PR linked to the GitHub issue with `Closes #...`.
+- After the scheduled run, the workflow reads the persisted scheduled target metadata from `.bond/state.yml`, runs configured `commands.lint` and `commands.test` checks when there are changes to publish, validates the GitHub App secrets for the write path, mints an installation token, then stages tracked changes, commits them as `doublenot-bond[bot]`, pushes the selected branch, and opens or reuses a PR linked to the GitHub issue with `Closes #...`.
 - Merge-wait scheduled runs exit successfully before verification and commit, even though they still record the pause state in `.bond` metadata.
 - Cron, provider, and model are rendered from `.bond/config.yml` into `.github/workflows/bond.yml`.
 - Provider API-key secret names are fixed by provider and match the runtime env lookup logic.
+- Scheduled branch pushes and PR creation require `BOND_GITHUB_APP_ID` and `BOND_GITHUB_APP_PRIVATE_KEY` so the remote write actor is the configured GitHub App instead of `github-actions[bot]`.
 - Generated workflows use a per-ref concurrency group and a 30-minute timeout to avoid overlapping scheduled runs on the same branch.
 - `/setup workflow` preserves an existing `.github/workflows/bond.yml`; `/setup workflow refresh` overwrites it intentionally.
 
