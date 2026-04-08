@@ -4,6 +4,7 @@ use crate::bond::{
     ScheduledTarget, ScheduledTargetKind, SetupIssue,
 };
 use crate::cli;
+use crate::prompt;
 use anyhow::{anyhow, bail, Context, Result};
 use serde::Deserialize;
 use std::env;
@@ -340,35 +341,54 @@ fn handle_setup(
             println!("Bond setup marked complete.");
         }
         "workflow" => {
-            let refresh = matches!(args.get(1).copied(), Some("refresh"));
-            let wrote_workflow = runtime.paths.install_bond_workflow(refresh)?;
+            let action = args.get(1).copied();
 
-            if wrote_workflow {
-                runtime.paths.append_journal_entry(
-                    if refresh {
-                        "Bond Workflow Refreshed"
-                    } else {
-                        "Bond Workflow Installed"
-                    },
-                    &format!(
-                        "Workflow file: {}\n\nSchedule: {}\nProvider: {}\nModel: {}",
-                        runtime.paths.bond_workflow_file.display(),
-                        runtime.config.automation.schedule_cron,
-                        runtime.config.automation.provider,
-                        runtime.config.automation.model
-                    ),
-                )?;
+            if action == Some("schedule") {
+                let description = collect_schedule_description(&args[2..]);
+                if description.is_empty() {
+                    bail!("Usage: /setup workflow schedule <human-readable schedule description>");
+                }
+                let cron = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current()
+                        .block_on(convert_schedule_to_cron(config, &description))
+                })?;
+                runtime.paths.set_schedule_cron(&cron)?;
+                runtime.refresh_config()?;
+                println!("Updated schedule_cron to: {cron}");
                 println!(
-                    "Bond workflow {}: {}",
-                    if refresh { "refreshed" } else { "installed" },
-                    runtime.paths.bond_workflow_file.display()
+                    "Run: /setup workflow refresh to reinstall the workflow with the new schedule."
                 );
             } else {
-                println!(
-                    "Bond workflow already exists: {}",
-                    runtime.paths.bond_workflow_file.display()
-                );
-                println!("Use: /setup workflow refresh");
+                let refresh = action == Some("refresh");
+                let wrote_workflow = runtime.paths.install_bond_workflow(refresh)?;
+
+                if wrote_workflow {
+                    runtime.paths.append_journal_entry(
+                        if refresh {
+                            "Bond Workflow Refreshed"
+                        } else {
+                            "Bond Workflow Installed"
+                        },
+                        &format!(
+                            "Workflow file: {}\n\nSchedule: {}\nProvider: {}\nModel: {}",
+                            runtime.paths.bond_workflow_file.display(),
+                            runtime.config.automation.schedule_cron,
+                            runtime.config.automation.provider,
+                            runtime.config.automation.model
+                        ),
+                    )?;
+                    println!(
+                        "Bond workflow {}: {}",
+                        if refresh { "refreshed" } else { "installed" },
+                        runtime.paths.bond_workflow_file.display()
+                    );
+                } else {
+                    println!(
+                        "Bond workflow already exists: {}",
+                        runtime.paths.bond_workflow_file.display()
+                    );
+                    println!("Use: /setup workflow refresh");
+                }
             }
         }
         "reset" => {
@@ -379,12 +399,56 @@ fn handle_setup(
         other => {
             println!("Unknown /setup subcommand: {other}");
             println!(
-                "Use: /setup status | /setup issue | /setup workflow [refresh] | /setup complete | /setup reset"
+                "Use: /setup status | /setup issue | /setup workflow [schedule <description>] [refresh] | /setup complete | /setup reset"
             );
         }
     }
 
     Ok(ReplDirective::Continue)
+}
+
+fn collect_schedule_description(args: &[&str]) -> String {
+    let joined = args.join(" ");
+    let trimmed = joined.trim();
+    if (trimmed.starts_with('\'') && trimmed.ends_with('\''))
+        || (trimmed.starts_with('"') && trimmed.ends_with('"'))
+    {
+        trimmed[1..trimmed.len() - 1].to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+async fn convert_schedule_to_cron(config: &BondAgentConfig, description: &str) -> Result<String> {
+    let system_prompt = "You are a cron expression expert. When given a human-readable schedule \
+        description, respond with ONLY a valid 5-field cron expression (minute hour day-of-month \
+        month day-of-week). No explanation, no markdown formatting, no code blocks, just the cron \
+        expression itself.";
+    let mut agent = config.build_minimal_agent(system_prompt)?;
+    let prompt = format!(
+        "Convert this schedule to a cron expression: {description}\n\n\
+        Reply with only the cron expression, nothing else."
+    );
+    let raw = prompt::capture_prompt(&mut agent, &prompt).await?;
+    let cron = clean_cron_response(&raw);
+    if cron.is_empty() {
+        bail!("AI returned an empty cron expression for: {description}");
+    }
+    Ok(cron)
+}
+
+fn clean_cron_response(raw: &str) -> String {
+    let text = raw.trim();
+    let text = text
+        .trim_start_matches("```cron")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+    text.lines()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or("")
+        .trim()
+        .to_string()
 }
 
 pub fn prepare_scheduled_issue_prompt(
@@ -2110,5 +2174,46 @@ mod tests {
             select_scheduled_pull_request(&pull_requests, true),
             ScheduledPullRequestDisposition::None
         ));
+    }
+
+    #[test]
+    fn collect_schedule_description_joins_args_and_strips_quotes() {
+        use super::collect_schedule_description;
+
+        assert_eq!(
+            collect_schedule_description(&["every", "6", "hours"]),
+            "every 6 hours"
+        );
+        // REPL tokenizes `'every 6 hours'` into `["'every", "6", "hours'"]`
+        // joining and then stripping surrounding quotes gives "every 6 hours"
+        assert_eq!(
+            collect_schedule_description(&["'every", "6", "hours'"]),
+            "every 6 hours"
+        );
+        assert_eq!(
+            collect_schedule_description(&["'every 6 hours'"]),
+            "every 6 hours"
+        );
+        assert_eq!(
+            collect_schedule_description(&["\"every 6 hours\""]),
+            "every 6 hours"
+        );
+        assert_eq!(collect_schedule_description(&[]), "");
+    }
+
+    #[test]
+    fn clean_cron_response_strips_markdown_and_extra_lines() {
+        use super::clean_cron_response;
+
+        assert_eq!(clean_cron_response("0 */6 * * *"), "0 */6 * * *");
+        assert_eq!(clean_cron_response("```\n0 */6 * * *\n```"), "0 */6 * * *");
+        assert_eq!(
+            clean_cron_response("```cron\n0 */6 * * *\n```"),
+            "0 */6 * * *"
+        );
+        assert_eq!(
+            clean_cron_response("  0 */6 * * *  \n\nsome explanation"),
+            "0 */6 * * *"
+        );
     }
 }

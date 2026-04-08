@@ -543,6 +543,38 @@ impl BondPaths {
         Ok(BondConfig::from_parts(settings, state))
     }
 
+    pub fn set_schedule_cron(&self, cron: &str) -> Result<()> {
+        let text = fs::read_to_string(&self.config_file)
+            .with_context(|| format!("failed to read {}", self.config_file.display()))?;
+        let mut updated_lines: Vec<String> = Vec::new();
+        let mut found = false;
+        for line in text.lines() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("schedule_cron:") {
+                let indent = &line[..line.len() - trimmed.len()];
+                updated_lines.push(format!(
+                    "{indent}schedule_cron: {}",
+                    yaml_single_quoted(cron)
+                ));
+                found = true;
+            } else {
+                updated_lines.push(line.to_string());
+            }
+        }
+        if !found {
+            anyhow::bail!(
+                "schedule_cron field not found in {}",
+                self.config_file.display()
+            );
+        }
+        let mut updated = updated_lines.join("\n");
+        if text.ends_with('\n') {
+            updated.push('\n');
+        }
+        fs::write(&self.config_file, updated)
+            .with_context(|| format!("failed to write {}", self.config_file.display()))
+    }
+
     pub fn append_journal_entry(&self, title: &str, body: &str) -> Result<()> {
         let existing = fs::read_to_string(&self.journal_file).unwrap_or_default();
         let mut updated = String::new();
@@ -1245,4 +1277,73 @@ fn set_executable_permissions(path: &Path) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn set_schedule_cron_updates_config_field() {
+        let temp = tempdir().expect("tempdir");
+        let repo = temp.path();
+
+        let paths = BondPaths::new(repo.to_path_buf()).expect("BondPaths::new");
+        paths.bootstrap_bond_files().expect("bootstrap");
+
+        paths
+            .set_schedule_cron("0 */6 * * *")
+            .expect("set_schedule_cron");
+
+        let config_text = fs::read_to_string(&paths.config_file).expect("read config");
+        assert!(
+            config_text.contains("schedule_cron: '0 */6 * * *'"),
+            "config should have updated cron: {config_text}"
+        );
+    }
+
+    #[test]
+    fn set_schedule_cron_preserves_other_config_fields() {
+        let temp = tempdir().expect("tempdir");
+        let repo = temp.path();
+
+        let paths = BondPaths::new(repo.to_path_buf()).expect("BondPaths::new");
+        paths.bootstrap_bond_files().expect("bootstrap");
+
+        paths
+            .set_schedule_cron("30 4 * * 1")
+            .expect("set_schedule_cron");
+
+        let settings = paths.load_bond_settings().expect("load settings");
+        assert_eq!(settings.automation.schedule_cron, "30 4 * * 1");
+        assert!(!settings.automation.provider.is_empty());
+        assert!(!settings.automation.model.is_empty());
+    }
+
+    #[test]
+    fn set_schedule_cron_handles_quoted_existing_value() {
+        let temp = tempdir().expect("tempdir");
+        let repo = temp.path();
+        let config_path = repo.join(".bond/config.yml");
+        fs::create_dir_all(repo.join(".bond")).expect("create .bond");
+        fs::write(
+            &config_path,
+            "version: 1\nexecutable_path: .bond/bin/doublenot-bond\nautomation:\n  schedule_cron: '0 * * * *'\n  provider: anthropic\n  model: claude-sonnet\n",
+        )
+        .expect("write config");
+
+        let paths = BondPaths::new(repo.to_path_buf()).expect("BondPaths::new");
+        paths
+            .set_schedule_cron("0 */4 * * *")
+            .expect("set_schedule_cron");
+
+        let config_text = fs::read_to_string(&config_path).expect("read config");
+        assert!(
+            config_text.contains("schedule_cron: '0 */4 * * *'"),
+            "config should have updated cron: {config_text}"
+        );
+        assert!(config_text.contains("provider: anthropic"));
+        assert!(config_text.contains("model: claude-sonnet"));
+    }
 }

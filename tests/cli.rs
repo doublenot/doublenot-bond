@@ -91,3 +91,19 @@ fn help_flag_lists_issue_workflow_commands() {
     assert!(stdout.contains("/issues sync"));
     assert!(stdout.contains("/issues complete [msg]"));
 }
+
+#[test]
+fn help_flag_documents_workflow_schedule_command() {
+    let output = bond_cmd()
+        .arg("--help")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run doublenot-bond");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("/setup workflow schedule"),
+        "help should document /setup workflow schedule: {stdout}"
+    );
+}
