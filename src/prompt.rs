@@ -54,6 +54,34 @@ pub async fn run_prompt(agent: &mut Agent, input: &str) -> Result<()> {
     Ok(())
 }
 
+pub async fn capture_prompt(agent: &mut Agent, input: &str) -> Result<String> {
+    let mut rx = agent.prompt(input).await;
+    let mut text = String::new();
+
+    while let Some(event) = rx.recv().await {
+        match event {
+            AgentEvent::MessageUpdate {
+                delta: StreamDelta::Text { delta },
+                ..
+            } => {
+                text.push_str(&delta);
+            }
+            AgentEvent::MessageEnd { message, .. } => {
+                if text.is_empty() {
+                    text = extract_text(&message);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if text.is_empty() {
+        bail!("The agent returned no text response.");
+    }
+
+    Ok(text)
+}
+
 fn extract_text(message: &AgentMessage) -> String {
     let Some(message) = message.as_llm() else {
         return String::new();

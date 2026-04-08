@@ -91,6 +91,23 @@ impl BondAgentConfig {
             .with_tools(build_tools(self)))
     }
 
+    pub fn build_minimal_agent(&self, system_prompt: &str) -> Result<Agent> {
+        self.validate_api_key()?;
+
+        let model_config = create_model_config(&self.provider, &self.model);
+        let agent = match self.provider.as_str() {
+            "anthropic" => Agent::new(AnthropicProvider).with_model_config(model_config),
+            "google" => Agent::new(GoogleProvider).with_model_config(model_config),
+            _ => Agent::new(OpenAiCompatProvider).with_model_config(model_config),
+        };
+
+        Ok(agent
+            .with_system_prompt(system_prompt)
+            .with_model(&self.model)
+            .with_api_key(&self.api_key)
+            .with_thinking(self.thinking_level))
+    }
+
     fn validate_api_key(&self) -> Result<()> {
         if self.provider != "ollama" && self.api_key.is_empty() {
             let env_hint = cli::provider_api_key_env(&self.provider).unwrap_or("API_KEY");

@@ -536,6 +536,62 @@ fn prompt_setup_workflow_refresh_overwrites_existing_file() {
 }
 
 #[test]
+fn prompt_setup_workflow_schedule_requires_description() {
+    let temp = tempdir().expect("tempdir");
+    let repo = temp.path();
+
+    let output = bond_cmd()
+        .arg("--repo")
+        .arg(repo)
+        .arg("--bond-runtime")
+        .arg("--provider")
+        .arg("ollama")
+        .arg("--prompt")
+        .arg("/setup workflow schedule")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run doublenot-bond");
+
+    assert!(
+        !output.status.success(),
+        "schedule without description should fail"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Usage:") || stderr.contains("schedule"),
+        "stderr should contain usage hint: {stderr}"
+    );
+}
+
+#[test]
+fn prompt_setup_workflow_schedule_fails_without_api_key() {
+    let temp = tempdir().expect("tempdir");
+    let repo = temp.path();
+
+    let output = bond_cmd()
+        .arg("--repo")
+        .arg(repo)
+        .arg("--bond-runtime")
+        .arg("--provider")
+        .arg("openai")
+        .arg("--prompt")
+        .arg("/setup workflow schedule every 6 hours")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run doublenot-bond");
+
+    assert!(
+        !output.status.success(),
+        "schedule without API key should fail"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("API key") || stderr.contains("OPENAI_API_KEY"),
+        "stderr should report missing API key: {stderr}"
+    );
+}
+
+#[test]
 fn scheduled_run_without_eligible_issue_skips_setup_warning() {
     let temp = tempdir().expect("tempdir");
     let repo = temp.path();

@@ -248,6 +248,9 @@ pub fn print_help() {
     println!("  /status                Show runtime and model status");
     println!("  /setup <subcommand>    Manage .bond setup state and onboarding issue");
     println!("    /setup workflow      Create .github/workflows/bond.yml from .bond/config.yml");
+    println!(
+        "    /setup workflow schedule <description>  Update schedule_cron using AI-converted cron"
+    );
     println!("  /issues list           List eligible GitHub intake issues");
     println!("  /issues next           Select the highest-priority eligible issue");
     println!(
