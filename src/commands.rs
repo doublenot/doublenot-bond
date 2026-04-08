@@ -344,7 +344,7 @@ fn handle_setup(
             let action = args.get(1).copied();
 
             if action == Some("schedule") {
-                let description = collect_schedule_description(&args[2..]);
+                let description = collect_schedule_description(args.get(2..).unwrap_or_default());
                 if description.is_empty() {
                     bail!("Usage: /setup workflow schedule <human-readable schedule description>");
                 }
@@ -425,10 +425,7 @@ async fn convert_schedule_to_cron(config: &BondAgentConfig, description: &str) -
         month day-of-week). No explanation, no markdown formatting, no code blocks, just the cron \
         expression itself.";
     let mut agent = config.build_minimal_agent(system_prompt)?;
-    let prompt = format!(
-        "Convert this schedule to a cron expression: {description}\n\n\
-        Reply with only the cron expression, nothing else."
-    );
+    let prompt = format!("Convert this schedule to a cron expression: {description}");
     let raw = prompt::capture_prompt(&mut agent, &prompt).await?;
     let cron = clean_cron_response(&raw);
     if cron.is_empty() {

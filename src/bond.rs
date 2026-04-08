@@ -551,7 +551,8 @@ impl BondPaths {
         for line in text.lines() {
             let trimmed = line.trim_start();
             if trimmed.starts_with("schedule_cron:") {
-                let indent = &line[..line.len() - trimmed.len()];
+                let leading_spaces = line.len() - trimmed.len();
+                let indent = &line[..leading_spaces];
                 updated_lines.push(format!(
                     "{indent}schedule_cron: {}",
                     yaml_single_quoted(cron)
