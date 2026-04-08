@@ -1,5 +1,15 @@
 # Journal
 
+## Scheduled PR Feedback Started
+
+Addressing requested changes on PR #4 bond: resolve #1 'Task: Add more parameters to the "/setup workflow" slash command'.
+
+PR URL: https://github.com/doublenot/doublenot-bond/pull/4
+Branch: bond/issue-1-task-add-more-parameters-to-the-setup-workflow-s
+Related issue: #1 [bond-task] Task: Add more parameters to the "/setup workflow" slash command
+
+https://github.com/doublenot/doublenot-bond/issues/1
+
 ## Scheduled Issue Execution Started
 
 Selected issue #1 [bond-task] Task: Add more parameters to the "/setup workflow" slash command from the scheduled workflow.
